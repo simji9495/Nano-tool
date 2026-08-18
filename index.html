@@ -5,71 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>REELCHECK — 나노 인플루언서 콘텐츠 1차 검수 플랫폼</title>
     
-    <!-- React 및 필수 라이브러리 CDN 연결 (터미널 없이 웹 구동용) -->
-    <script src="https://unpkg.com" crossorigin></script>
-    <script src="https://unpkg.com" crossorigin></script>
-    <script src="https://unpkg.com"></script>
-    <script src="https://cloudflare.com"></script>
-    <script src="https://cloudflare.com"></script>
+    <!-- 🛡️ 사내 보안 서버 통과용 전 세계 표준 CDN 주소로 전면 교체 -->
+    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
     <style>
-        /* ── 팀원이 작성한 CSS 스타일시트 반영 ── */
         .rc { --paper:#EFF1EC; --panel:#FFFFFF; --ink:#14181B; --graphite:#4A5257;
           --mute:#858E88; --line:#D6DBD3; --line2:#E7EAE4;
           --stamp:#7A2233; --pass:#17654C; --fix:#A96D08; --block:#9E2016;
           --mono: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
           --sans: -apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
           background:var(--paper); color:var(--ink); font-family:var(--sans);
-          min-height:100vh; -webkit-font-smoothing:antialiased; margin:0; }
-        .rc *,.rc *::before,.rc *::after { box-sizing:border-box; }
+          min-height:100vh; margin:0; }
+        .rc * { box-sizing:border-box; }
         .rc button { font-family:inherit; cursor:pointer; }
-        .rc button:focus-visible,.rc input:focus-visible,.rc textarea:focus-visible,.rc select:focus-visible,.rc [tabindex]:focus-visible {
-          outline:2px solid var(--stamp); outline-offset:2px; }
-
         .bar { position:sticky; top:0; z-index:40; display:flex; align-items:center; gap:18px; padding:0 20px; height:54px; background:var(--ink); color:#EFF1EC; }
         .brand { font-family:var(--mono); font-size:13px; letter-spacing:.22em; font-weight:600; }
         .brand em { font-style:normal; color:#C98A96; }
         .bar-sub { font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; color:#8A9490; }
         .spacer { flex:1; }
         .roles { display:flex; border:1px solid #363E43; border-radius:2px; overflow:hidden; }
-        .roles button { background:transparent; border:0; color:#98A19C; font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; padding:7px 13px; }
-        .roles button[data-on="1"] { background:#EFF1EC; color:var(--ink); font-weight:600; }
-        .who { font-family:var(--mono); font-size:11px; background:#22282C; color:#EFF1EC; border:1px solid #363E43; border-radius:2px; padding:6px 8px; max-width:190px; }
-
+        .roles button { background:transparent; border:0; color:#98A19C; font-family:var(--mono); font-size:10.5px; padding:7px 13px; }
+        .roles button.active { background:#EFF1EC; color:var(--ink); font-weight:600; }
         .wrap { max-width:1180px; margin:0 auto; padding:26px 20px 90px; }
         .eyebrow { font-family:var(--mono); font-size:10px; letter-spacing:.2em; color:var(--mute); }
-        .h1 { font-size:27px; font-weight:700; letter-spacing:-.02em; margin:6px 0 0; line-height:1.2; }
-        .lede { color:var(--graphite); font-size:13.5px; line-height:1.65; margin:8px 0 0; max-width:62ch; }
-
+        .lede { color:var(--graphite); font-size:13.5px; margin:8px 0 20px; max-width:62ch; }
         .card { background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:16px; margin-top:14px; }
         .card-hd { display:flex; align-items:baseline; gap:10px; padding-bottom:13px; border-bottom:1px solid var(--line2); margin-bottom:16px; }
-        .card-hd h2 { margin:0; font-size:13.5px; font-weight:650; letter-spacing:-.01em; }
-        .card-hd .tag { font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; color:var(--mute); }
-
+        .card-hd h2 { margin:0; font-size:13.5px; font-weight:650; }
         .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-        .grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
-        @media (max-width:820px){ .grid2,.grid3 { grid-template-columns:1fr; } }
-
-        .lab { display:block; font-family:var(--mono); font-size:10px; letter-spacing:.15em; color:var(--graphite); margin-bottom:6px; }
-        .in, .ta, .sel { width:100%; background:#FBFCFA; border:1px solid var(--line); border-radius:2px; padding:9px 10px; font-size:13.5px; font-family:inherit; color:var(--ink); }
-        .ta { resize:vertical; min-height:90px; line-height:1.6; }
-        .field { margin-bottom:13px; }
-        .row { display:flex; gap:8px; align-items:center; }
-        
+        .lab { display:block; font-family:var(--mono); font-size:10px; color:var(--graphite); margin-bottom:6px; }
+        .in { width:100%; background:#FBFCFA; border:1px solid var(--line); border-radius:2px; padding:9px 10px; font-size:13.5px; }
         .btn { border:1px solid var(--ink); background:var(--ink); color:#F4F6F2; border-radius:2px; padding:9px 16px; font-size:12.5px; font-weight:600; }
-        .btn:disabled { opacity:.4; cursor:not-allowed; }
-        .btn.ghost { background:transparent; color:var(--ink); border-color:var(--line); font-weight:500; }
         .btn.stamp { background:var(--stamp); border-color:var(--stamp); }
         .btn.sm { padding:6px 11px; font-size:11.5px; }
-
         .steps { display:flex; gap:0; margin:20px 0 16px; border-bottom:1px solid var(--line); }
-        .steps button { background:transparent; border:0; border-bottom:2px solid transparent; padding:10px 14px 9px; font-size:12.5px; color:var(--mute); }
-        .steps button[data-on="1"] { color:var(--ink); border-bottom-color:var(--stamp); font-weight:650; }
-
+        .steps button { background:transparent; border:0; padding:10px 14px 9px; font-size:12.5px; color:var(--mute); }
+        .steps button.active { color:var(--ink); border-bottom:2px solid var(--stamp); font-weight:650; }
         .tbl { width:100%; border-collapse:collapse; font-size:13px; }
-        .tbl th { text-align:left; font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; color:var(--mute); padding:9px 12px; border-bottom:1px solid var(--line); }
+        .tbl th { text-align:left; font-family:var(--mono); font-size:9.5px; color:var(--mute); padding:9px 12px; border-bottom:1px solid var(--line); }
         .tbl td { padding:11px 12px; border-bottom:1px solid var(--line2); }
-
         .drop { border:1px dashed var(--line); border-radius:3px; background:#FBFCFA; padding:34px 20px; text-align:center; }
         .st { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10px; padding:4px 8px; border-radius:2px; border:1px solid currentColor; }
         .st.pass { color:var(--pass); background:#EDF5F1; }
@@ -77,73 +55,82 @@
     </style>
 </head>
 <body class="rc">
-    <!-- 리액트 컴포넌트가 주입될 엘리먼트 -->
     <div id="root"></div>
 
-    <!-- 브라우저 컴파일 및 렌더링 스크립트 작성 -->
+    <!-- 구형/신형 보안 인프라 모두 호환되는 컴파일 옵션 설정 -->
+    <script type="text/transform" data-plugins="transform-es2015-modules-umd"></script>
     <script type="text/babel">
-        const { useState, useEffect } = React;
-
-        // 🔗 2단계에서 연동 성공한 나의 실제 Render 백엔드 주소 기입
-        const API_BASE = "https://nano-tool.onrender.com"; 
+        var useState = React.useState;
 
         function App() {
-            const [role, setRole] = useState("marketer"); // marketer 또는 influencer
-            const [step, setStep] = useState(1);
-            
-            // 캠페인 기본 정보 상태 관리
-            const [campaign, setCampaign] = useState({
-                brand: "", product: "", usps: ["", "", ""], bans: [""]
-            });
-
-            // 임시 인플루언서 데이터 목록 기본 세팅
-            const [influencers, setInfluencers] = useState([
+            var [role, setRole] = useState("marketer");
+            var [step, setStep] = useState(1);
+            var [campaign, setCampaign] = useState({ brand: "", product: "" });
+            var [influencers] = useState([
                 { id: 1, name: "김나노", handle: "@nano_review", status: "미제출", result: "-" },
                 { id: 2, name: "이리뷰", handle: "@lee_vlog", status: "검수완료", result: "통과" }
             ]);
 
             return (
                 <div>
-                    {/* 상단 바 내비게이션 */}
                     <div className="bar">
                         <div className="brand">REEL<em>CHECK</em></div>
                         <div className="bar-sub">NANO-INFLUENCER PLATFORM</div>
                         <div className="spacer"></div>
                         <div className="roles">
-                            <button data-on={role === "marketer" ? "1" : "0"} onClick={() => setRole("marketer")}>MARKETER</button>
-                            <button data-on={role === "influencer" ? "1" : "0"} onClick={() => setRole("influencer")}>INFLUENCER</button>
+                            <button className={role === "marketer" ? "active" : ""} onClick={() => setRole("marketer")}>MARKETER</button>
+                            <button className={role === "influencer" ? "active" : ""} onClick={() => setRole("influencer")}>INFLUENCER</button>
                         </div>
                     </div>
 
                     <div className="wrap">
                         <span className="eyebrow">AUTOMATED CONTENT VERIFICATION</span>
-                        <h1 className="h1">인플루언서 콘텐츠 1차 검수 대시보드</h1>
-                        <p className="lede">AI 기술을 기반으로 업로드된 숏폼 영상의 자막, 오디오, USP 포함 여부 및 브랜드 금기사항을 실시간으로 자동 선별합니다.</p>
+                        <h1 style={{fontSize: "27px", margin: "6px 0 0"}}>인플루언서 콘텐츠 1차 검수 대시보드</h1>
+                        <p className="lede">AI 기술을 기반으로 숏폼 영상의 자막, 오디오를 자동 실시간 선별합니다.</p>
 
                         {role === "marketer" ? (
                             <div>
-                                {/* ── 마케터 화면 ── */}
                                 <div className="steps">
-                                    <button data-on={step === 1 ? "1" : "0"} onClick={() => setStep(1)}>1. 캠페인 가이드 설정</button>
-                                    <button data-on={step === 2 ? "1" : "0"} onClick={() => setStep(2)}>2. 대상 인플루언서 관리</button>
+                                    <button className={step === 1 ? "active" : ""} onClick={() => setStep(1)}>1. 캠페인 가이드 설정</button>
+                                    <button className={step === 2 ? "active" : ""} onClick={() => setStep(2)}>2. 대상 인플루언서 관리</button>
                                 </div>
 
                                 {step === 1 ? (
                                     <div className="card">
-                                        <div className="card-hd">
-                                            <h2>캠페인 규칙 설정</h2>
-                                            <span className="tag">CAMPAIGN RULES</span>
-                                        </div>
+                                        <div className="card-hd"><h2>캠페인 규칙 설정</h2></div>
                                         <div className="grid2">
-                                            <div className="field">
+                                            <div>
                                                 <label className="lab">브랜드명</label>
                                                 <input className="in" placeholder="예: 나노뷰티" value={campaign.brand} onChange={(e)=>setCampaign({...campaign, brand: e.target.value})} />
                                             </div>
-                                            <div className="field">
+                                            <div>
                                                 <label className="lab">제품명</label>
                                                 <input className="in" placeholder="예: 수분 크림 에센스" value={campaign.product} onChange={(e)=>setCampaign({...campaign, product: e.target.value})} />
                                             </div>
                                         </div>
-                                        <div className="field" style={{marginTop: '15px'}}>
-                                            <label className="lab">필수 포함 USP (최대 3개)</label>
-                                            <input className="in" style={{marginBottom: '5px'}} placeholder="USP 1: 48시간 지속 수분감" />
+                                        <button className="btn stamp" style={{marginTop: '20px'}} onClick={() => alert('저장되었습니다.')}>규칙 저장하기</button>
+                                    </div>
+                                ) : (
+                                    <div className="card">
+                                        <div className="card-hd"><h2>인플루언서 검수 현황 리스트</h2></div>
+                                        <table className="tbl">
+                                            <thead>
+                                                <tr>
+                                                    <th>인플루언서 정보</th>
+                                                    <th>제출 상태</th>
+                                                    <th>AI 검수 결과</th>
+                                                    <th>관리</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {influencers.map(function(inf) {
+                                                    return (
+                                                        <tr key={inf.id}>
+                                                            <td>
+                                                                <div style={{fontWeight:600}}>{inf.name}</div>
+                                                                <div style={{color: '#858E88', fontSize: '11px'}}>{inf.handle}</div>
+                                                            </td>
+                                                            <td>{inf.status}</td>
+                                                            <td><span className="st pass">{inf.result}</span></td>
+                                                            <td><button className="btn sm" onClick={() => alert(inf.name + ' 피드백')}>상세 보기</button></td>
+                                                        </tr>
