@@ -1,0 +1,1455 @@
+import React, { useState, useRef, useMemo, useEffect } from "react";
+import Papa from "papaparse";
+import * as XLSX from "xlsx";
+
+/* ────────────────────────────────────────────────────────────
+   REELCHECK — 나노 인플루언서 콘텐츠 1차 검수 플랫폼
+   ────────────────────────────────────────────────────────────
+   실제 동작:
+     · 업로드된 영상을 구간으로 쪼개 프레임 추출 (canvas)
+     · 추출 프레임에서 자막 텍스트 인식 (Claude vision)
+     · 브랜드명/제품명 표기, USP 반영, 금기사항 위반 판정 (Claude)
+   서버 연동 (reelcheck-server):
+     · API_BASE를 채우면 /api/inspect로 crv 키프레임 + Whisper 전사를 받아온다.
+     · 서버가 없거나 응답이 실패하면 브라우저 프레임 추출로 자동 폴백한다.
+   저장:
+     · 캠페인·명단·검수 결과를 브라우저에 저장한다. 프레임 이미지는 저장하지 않는다.
+   ──────────────────────────────────────────────────────────── */
+
+const API_BASE = ""; // 예: "http://localhost:8787" — 비우면 브라우저 단독 모드
+const MODEL = "claude-sonnet-4-6";
+const FRAME_COUNT = 6;
+const OCR_LIMIT = 10; // 자막 판독에 쓸 최대 컷 수 (이미지 토큰 상한)
+const STORE_KEY = "reelcheck:state";
+
+const CSS = `
+.rc { --paper:#EFF1EC; --panel:#FFFFFF; --ink:#14181B; --graphite:#4A5257;
+  --mute:#858E88; --line:#D6DBD3; --line2:#E7EAE4;
+  --stamp:#7A2233; --pass:#17654C; --fix:#A96D08; --block:#9E2016;
+  --mono: ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --sans: -apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  background:var(--paper); color:var(--ink); font-family:var(--sans);
+  min-height:100vh; -webkit-font-smoothing:antialiased; }
+.rc *,.rc *::before,.rc *::after { box-sizing:border-box; }
+.rc button { font-family:inherit; cursor:pointer; }
+.rc button:focus-visible,.rc input:focus-visible,.rc textarea:focus-visible,.rc select:focus-visible,.rc [tabindex]:focus-visible {
+  outline:2px solid var(--stamp); outline-offset:2px; }
+
+/* ── 상단 바 ── */
+.bar { position:sticky; top:0; z-index:40; display:flex; align-items:center; gap:18px;
+  padding:0 20px; height:54px; background:var(--ink); color:#EFF1EC; }
+.brand { font-family:var(--mono); font-size:13px; letter-spacing:.22em; font-weight:600; }
+.brand em { font-style:normal; color:#C98A96; }
+.bar-sub { font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; color:#8A9490; }
+.spacer { flex:1; }
+.roles { display:flex; border:1px solid #363E43; border-radius:2px; overflow:hidden; }
+.roles button { background:transparent; border:0; color:#98A19C; font-family:var(--mono);
+  font-size:10.5px; letter-spacing:.14em; padding:7px 13px; }
+.roles button[data-on="1"] { background:#EFF1EC; color:var(--ink); font-weight:600; }
+.who { font-family:var(--mono); font-size:11px; background:#22282C; color:#EFF1EC;
+  border:1px solid #363E43; border-radius:2px; padding:6px 8px; max-width:190px; }
+
+/* ── 레이아웃 ── */
+.wrap { max-width:1180px; margin:0 auto; padding:26px 20px 90px; }
+.eyebrow { font-family:var(--mono); font-size:10px; letter-spacing:.2em; color:var(--mute); }
+.h1 { font-size:27px; font-weight:700; letter-spacing:-.02em; margin:6px 0 0; line-height:1.2; }
+.lede { color:var(--graphite); font-size:13.5px; line-height:1.65; margin:8px 0 0; max-width:62ch; }
+
+.card { background:var(--panel); border:1px solid var(--line); border-radius:3px; }
+.card + .card { margin-top:14px; }
+.card-hd { display:flex; align-items:baseline; gap:10px; padding:13px 16px; border-bottom:1px solid var(--line2); }
+.card-hd h2 { margin:0; font-size:13.5px; font-weight:650; letter-spacing:-.01em; }
+.card-hd .tag { font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; color:var(--mute); }
+.card-bd { padding:16px; }
+
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.grid3 { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+@media (max-width:820px){ .grid2,.grid3 { grid-template-columns:1fr; } }
+
+/* ── 폼 ── */
+.lab { display:block; font-family:var(--mono); font-size:10px; letter-spacing:.15em;
+  color:var(--graphite); margin-bottom:6px; }
+.in, .ta, .sel { width:100%; background:#FBFCFA; border:1px solid var(--line); border-radius:2px;
+  padding:9px 10px; font-size:13.5px; font-family:inherit; color:var(--ink); }
+.ta { resize:vertical; min-height:90px; line-height:1.6; }
+.in::placeholder,.ta::placeholder { color:#A9B1AB; }
+.field + .field { margin-top:13px; }
+.row { display:flex; gap:8px; align-items:center; }
+.hint { font-size:11.5px; color:var(--mute); margin-top:6px; line-height:1.5; }
+
+.btn { border:1px solid var(--ink); background:var(--ink); color:#F4F6F2; border-radius:2px;
+  padding:9px 16px; font-size:12.5px; font-weight:600; letter-spacing:.01em; }
+.btn:disabled { opacity:.4; cursor:not-allowed; }
+.btn.ghost { background:transparent; color:var(--ink); border-color:var(--line); font-weight:500; }
+.btn.ghost:hover { border-color:var(--ink); }
+.btn.stamp { background:var(--stamp); border-color:var(--stamp); }
+.btn.sm { padding:6px 11px; font-size:11.5px; }
+.btn.icon { padding:6px 9px; font-family:var(--mono); }
+
+/* ── 칩 ── */
+.chip { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line);
+  border-radius:2px; padding:6px 9px; font-size:12.5px; background:#FBFCFA; }
+.chip b { font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; color:var(--mute); font-weight:600; }
+.chip .x { border:0; background:transparent; color:var(--mute); font-size:14px; line-height:1; padding:0 1px; }
+.chip .x:hover { color:var(--block); }
+.chips { display:flex; flex-wrap:wrap; gap:7px; }
+
+/* ── 스텝 내비 ── */
+.steps { display:flex; gap:0; margin:20px 0 16px; border-bottom:1px solid var(--line); }
+.steps button { background:transparent; border:0; border-bottom:2px solid transparent;
+  padding:10px 14px 9px; font-size:12.5px; color:var(--mute); display:flex; gap:8px; align-items:center; }
+.steps button[data-on="1"] { color:var(--ink); border-bottom-color:var(--stamp); font-weight:650; }
+.steps .n { font-family:var(--mono); font-size:9.5px; letter-spacing:.1em; }
+
+/* ── 요약 수치 ── */
+.stats { display:grid; grid-template-columns:repeat(4,1fr); border-top:1px solid var(--line2); }
+.stat { padding:15px 16px; border-right:1px solid var(--line2); }
+.stat:last-child { border-right:0; }
+.stat .v { font-family:var(--mono); font-size:25px; font-weight:600; letter-spacing:-.03em; }
+.stat .k { font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; color:var(--mute); margin-top:3px; }
+@media (max-width:640px){ .stats { grid-template-columns:1fr 1fr; } .stat:nth-child(2){border-right:0} }
+
+/* ── 표 ── */
+.tbl { width:100%; border-collapse:collapse; font-size:13px; }
+.tbl th { text-align:left; font-family:var(--mono); font-size:9.5px; letter-spacing:.14em;
+  color:var(--mute); font-weight:600; padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap; }
+.tbl td { padding:11px 12px; border-bottom:1px solid var(--line2); vertical-align:middle; }
+.tbl tr:last-child td { border-bottom:0; }
+.tbl tbody tr:hover { background:#F7F9F5; }
+.namebtn { background:transparent; border:0; padding:0; font-size:13.5px; font-weight:600;
+  color:var(--ink); text-align:left; text-decoration:underline; text-decoration-color:var(--line);
+  text-underline-offset:3px; }
+.namebtn:hover { text-decoration-color:var(--stamp); color:var(--stamp); }
+.handle { font-family:var(--mono); font-size:10.5px; color:var(--mute); margin-top:2px; }
+
+.st { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono);
+  font-size:10px; letter-spacing:.1em; font-weight:600; padding:4px 8px; border-radius:2px;
+  border:1px solid currentColor; white-space:nowrap; }
+.st.pass { color:var(--pass); background:#EDF5F1; }
+.st.fix { color:var(--fix); background:#FBF3E4; }
+.st.none { color:var(--mute); background:#F4F6F2; }
+.st.run { color:var(--stamp); background:#F8EDEF; }
+.st.block { color:var(--block); background:#FBEDEB; }
+
+/* ── 업로드 존 ── */
+.drop { border:1px dashed var(--line); border-radius:3px; background:#FBFCFA;
+  padding:34px 20px; text-align:center; transition:.14s; }
+.drop[data-over="1"] { border-color:var(--stamp); background:#FAF1F2; }
+.drop .big { font-size:14.5px; font-weight:600; }
+.drop .sub { font-size:12px; color:var(--mute); margin-top:6px; }
+
+/* ── 파이프라인 ── */
+.pipe { display:flex; flex-direction:column; gap:1px; background:var(--line2); border:1px solid var(--line2); border-radius:2px; }
+.pstep { display:grid; grid-template-columns:26px 1fr auto; gap:11px; align-items:center;
+  background:var(--panel); padding:10px 13px; font-size:12.5px; }
+.pstep .dot { font-family:var(--mono); font-size:10px; color:var(--mute); }
+.pstep[data-s="run"] { background:#FAF1F2; }
+.pstep[data-s="run"] .dot { color:var(--stamp); }
+.pstep[data-s="done"] .dot { color:var(--pass); }
+.pstep[data-s="skip"] { color:var(--mute); }
+.pstep .note { font-family:var(--mono); font-size:10px; letter-spacing:.06em; color:var(--mute); }
+
+/* ── 시그니처: 검수 스트립 ── */
+.strip-wrap { background:#101416; border-radius:3px; padding:16px 16px 12px; }
+.strip-hd { display:flex; justify-content:space-between; align-items:baseline;
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; color:#7E8A85; margin-bottom:11px; }
+.strip { position:relative; display:flex; gap:2px; }
+.seg { position:relative; flex:1; }
+.seg .thumb { display:block; width:100%; aspect-ratio:16/9; object-fit:cover;
+  background:#1B2124; border-radius:1px; filter:saturate(.85); }
+.seg .ph { display:flex; align-items:center; justify-content:center; width:100%; aspect-ratio:16/9;
+  background:#1B2124; border:1px solid #2A3236; border-radius:1px;
+  font-family:var(--mono); font-size:11px; color:#4E5A55; }
+.save { display:flex; align-items:center; gap:9px; font-family:var(--mono);
+  font-size:10px; letter-spacing:.12em; color:#8A9490; }
+.save button { background:transparent; border:1px solid #363E43; color:#98A19C;
+  border-radius:2px; font-family:var(--mono); font-size:9.5px; letter-spacing:.12em; padding:5px 8px; }
+.save button:hover { border-color:#5C666B; color:#EFF1EC; }
+.save button[data-warn="1"] { color:#E0A9A9; border-color:#6B3A3F; }
+.seg[data-hit="1"] .thumb { outline:2px solid var(--pass); outline-offset:-2px; }
+.seg[data-hit="2"] .thumb { outline:2px solid #E0A02A; outline-offset:-2px; }
+.seg[data-hit="3"] .thumb { outline:2px solid #E05B4A; outline-offset:-2px; }
+.seg .tc { font-family:var(--mono); font-size:9px; color:#8E9994; margin-top:5px; text-align:center; letter-spacing:.04em; }
+.seg .cap { font-size:10.5px; color:#C9D2CD; line-height:1.4; margin-top:4px;
+  min-height:2.4em; overflow:hidden; padding:0 1px; }
+.marks { display:flex; gap:2px; margin-top:9px; }
+.mark { flex:1; height:4px; background:#242B2E; border-radius:1px; }
+.mark[data-t="pass"] { background:#2E8B69; }
+.mark[data-t="warn"] { background:#E0A02A; }
+.mark[data-t="block"] { background:#E05B4A; }
+.legend { display:flex; gap:14px; margin-top:11px; font-family:var(--mono);
+  font-size:9px; letter-spacing:.12em; color:#7E8A85; flex-wrap:wrap; }
+.legend i { display:inline-block; width:8px; height:8px; border-radius:1px; margin-right:5px; }
+
+/* ── 판정 스탬프 ── */
+.verdict { display:flex; align-items:center; gap:16px; padding:18px; border:1px solid var(--line);
+  border-radius:3px; background:var(--panel); }
+.seal { flex:none; width:96px; height:96px; border-radius:50%; display:grid; place-content:center;
+  text-align:center; transform:rotate(-9deg); font-family:var(--mono); letter-spacing:.1em; }
+.seal.pass { border:3px double var(--pass); color:var(--pass); }
+.seal.fix { border:3px double var(--fix); color:var(--fix); }
+.seal .t { font-size:18px; font-weight:700; letter-spacing:.02em; }
+.seal .s { font-size:8px; letter-spacing:.18em; margin-top:4px; }
+.verdict .msg { font-size:13.5px; line-height:1.65; color:var(--graphite); }
+.verdict .msg strong { color:var(--ink); }
+
+/* ── 검수 항목 ── */
+.checks { display:flex; flex-direction:column; gap:1px; background:var(--line2);
+  border:1px solid var(--line2); border-radius:2px; }
+.check { background:var(--panel); padding:12px 14px; }
+.check .top { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; }
+.check .ttl { font-size:13px; font-weight:600; line-height:1.45; }
+.check .ev { font-size:12px; color:var(--graphite); line-height:1.6; margin-top:7px;
+  padding-left:10px; border-left:2px solid var(--line); }
+.check .ev .tc { font-family:var(--mono); font-size:10px; color:var(--mute); letter-spacing:.06em; }
+
+/* ── 모달 ── */
+.mask { position:fixed; inset:0; background:rgba(16,20,22,.5); z-index:60;
+  display:flex; align-items:flex-start; justify-content:center; padding:36px 16px; overflow:auto; }
+.modal { background:var(--panel); border-radius:3px; width:100%; max-width:660px;
+  box-shadow:0 20px 50px rgba(16,20,22,.28); }
+.modal-hd { display:flex; align-items:flex-start; gap:12px; padding:16px 18px; border-bottom:1px solid var(--line2); }
+.modal-hd h3 { margin:0; font-size:16px; font-weight:700; letter-spacing:-.01em; }
+.modal-bd { padding:18px; }
+.modal-ft { display:flex; gap:8px; justify-content:flex-end; padding:14px 18px; border-top:1px solid var(--line2); }
+.close { border:0; background:transparent; font-size:19px; line-height:1; color:var(--mute); padding:2px 4px; }
+
+.sec-t { font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; color:var(--mute); margin:0 0 8px; }
+.sec + .sec { margin-top:18px; }
+.empty { padding:34px 18px; text-align:center; color:var(--mute); font-size:13px; line-height:1.6; }
+.err { background:#FBEDEB; border:1px solid #E8C4BF; color:#7E1A12; font-size:12.5px;
+  padding:10px 12px; border-radius:2px; line-height:1.55; }
+.note-box { background:#F7F9F5; border:1px solid var(--line2); border-radius:2px;
+  padding:11px 12px; font-size:12px; color:var(--graphite); line-height:1.6; }
+.kv { display:grid; grid-template-columns:auto 1fr; gap:5px 14px; font-size:12.5px; }
+.kv dt { font-family:var(--mono); font-size:10px; letter-spacing:.12em; color:var(--mute); padding-top:2px; }
+.kv dd { margin:0; }
+.spin { display:inline-block; width:11px; height:11px; border:2px solid var(--line);
+  border-top-color:var(--stamp); border-radius:50%; animation:sp .7s linear infinite; }
+@keyframes sp { to { transform:rotate(360deg) } }
+@media (prefers-reduced-motion:reduce){ .spin{animation:none} .drop{transition:none} }
+`;
+
+/* ─────────── 유틸 ─────────── */
+const tc = (s) => {
+  if (!isFinite(s)) return "--:--";
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+};
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+/* 균등 간격으로 n개만 고른다 */
+function pickEven(arr, n) {
+  if (arr.length <= n) return arr;
+  return Array.from({ length: n }, (_, i) => arr[Math.round((i * (arr.length - 1)) / (n - 1))]);
+}
+
+/* ─────────── 저장 (브라우저) ───────────
+   프레임 이미지는 용량이 커서 저장하지 않는다. 타임코드와 인식된 텍스트만 남긴다. */
+const forStorage = (roster) =>
+  roster.map((p) =>
+    p.submission
+      ? {
+          ...p,
+          submission: {
+            ...p.submission,
+            frames: (p.submission.frames || []).map((f) => ({ t: f.t })),
+            framesDropped: true,
+          },
+        }
+      : p
+  );
+
+async function loadState() {
+  if (!window.storage) return null;
+  try {
+    const r = await window.storage.get(STORE_KEY);
+    return r ? JSON.parse(r.value) : null;
+  } catch {
+    return null; // 저장된 값이 없으면 예외가 난다
+  }
+}
+
+async function saveState({ campaign, roster }) {
+  if (!window.storage) return { ok: false };
+  const at = new Date().toISOString();
+  try {
+    await window.storage.set(
+      STORE_KEY,
+      JSON.stringify({ v: 1, savedAt: at, campaign, roster: forStorage(roster) })
+    );
+    return { ok: true, at };
+  } catch {
+    return { ok: false };
+  }
+}
+
+async function clearState() {
+  if (!window.storage) return;
+  try { await window.storage.delete(STORE_KEY); } catch {}
+}
+
+/* ─────────── 서버 연동 ─────────── */
+async function serverInspect(file, opts = {}) {
+  const fd = new FormData();
+  fd.append("video", file);
+  Object.entries(opts).forEach(([k, v]) => fd.append(k, String(v)));
+  const r = await fetch(`${API_BASE}/api/inspect`, { method: "POST", body: fd });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.error || `검수 서버 응답 오류 (${r.status})`);
+  }
+  return await r.json();
+}
+
+/* 영상을 구간으로 쪼개 프레임 추출 */
+async function sliceVideo(file, count = FRAME_COUNT) {
+  const url = URL.createObjectURL(file);
+  const v = document.createElement("video");
+  v.muted = true; v.preload = "auto"; v.playsInline = true; v.src = url;
+  try {
+    await new Promise((res, rej) => {
+      v.onloadedmetadata = () => res();
+      v.onerror = () => rej(new Error("영상을 열 수 없습니다. mp4 또는 webm 파일로 다시 올려주세요."));
+      setTimeout(() => rej(new Error("영상 읽기가 오래 걸립니다. 파일 크기를 줄여 다시 시도해주세요.")), 20000);
+    });
+    let dur = v.duration;
+    if (!isFinite(dur) || dur <= 0) {
+      v.currentTime = 1e6;
+      await new Promise((r) => { v.ontimeupdate = () => r(); setTimeout(r, 1500); });
+      dur = isFinite(v.duration) ? v.duration : v.currentTime || 15;
+    }
+    const W = 512, ratio = v.videoWidth ? W / v.videoWidth : 1;
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = Math.max(2, Math.round((v.videoHeight || 288) * ratio));
+    const cx = cv.getContext("2d");
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      const t = Math.max(0.05, Math.min(dur - 0.08, (dur * (i + 0.5)) / count));
+      await new Promise((res) => { v.onseeked = () => res(); v.currentTime = t; setTimeout(res, 2500); });
+      cx.drawImage(v, 0, 0, cv.width, cv.height);
+      frames.push({ t, dataUrl: cv.toDataURL("image/jpeg", 0.72) });
+    }
+    return { duration: dur, frames, w: v.videoWidth, h: v.videoHeight };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/* Claude 호출 → JSON */
+async function askJSON(content) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: MODEL, max_tokens: 1000, messages: [{ role: "user", content }] }),
+  });
+  if (!r.ok) throw new Error(`검수 엔진 응답 오류 (${r.status})`);
+  const d = await r.json();
+  const txt = (d.content || []).map((c) => (c.type === "text" ? c.text : "")).join("\n");
+  const clean = txt.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const s = clean.indexOf("{"), e = clean.lastIndexOf("}");
+  return JSON.parse(s >= 0 ? clean.slice(s, e + 1) : clean);
+}
+
+/* 1단계: 프레임에서 자막 인식 */
+async function readSubtitles(frames) {
+  const content = [];
+  frames.forEach((f, i) => {
+    content.push({ type: "text", text: `[프레임 ${i + 1} / ${tc(f.t)}]` });
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: f.dataUrl.split(",")[1] },
+    });
+  });
+  content.push({
+    type: "text",
+    text:
+      `각 프레임 화면에 보이는 글자(자막, 화면에 얹힌 텍스트, 제품 패키지의 글자)를 그대로 읽어서 옮겨라. ` +
+      `오타나 잘못된 표기도 고치지 말고 보이는 대로 적어라. 글자가 없으면 빈 문자열.\n` +
+      `JSON만 출력. 설명·마크다운 금지.\n` +
+      `{"frames":[{"i":1,"subtitle":"화면 자막","onScreen":"기타 텍스트"}]}`,
+  });
+  const out = await askJSON(content);
+  return (out.frames || []).map((f, i) => ({
+    t: frames[i]?.t ?? 0,
+    subtitle: f.subtitle || "",
+    onScreen: f.onScreen || "",
+  }));
+}
+
+/* 2단계: 검수 판정 */
+async function runReview({ campaign, ocr, transcript, caption }) {
+  const subs = ocr.map((o, i) => `${tc(o.t)} 자막: ${o.subtitle || "(없음)"}${o.onScreen ? ` / 화면텍스트: ${o.onScreen}` : ""}`).join("\n");
+  const prompt = `너는 인플루언서 마케팅 콘텐츠의 1차 검수 담당자다. 아래 캠페인 기준으로 제출물을 점검해라.
+
+[캠페인 기준]
+브랜드명(정확한 표기): ${campaign.brand}
+제품명(정확한 표기): ${campaign.product}
+필수 USP:
+${campaign.usps.map((u, i) => `  U${i + 1}. ${u}`).join("\n")}
+금기사항:
+${campaign.taboos.length ? campaign.taboos.map((t, i) => `  T${i + 1}. ${t}`).join("\n") : "  (없음)"}
+
+[제출물 — 영상 자막/화면텍스트]
+${subs || "(인식된 텍스트 없음)"}
+
+[제출물 — 음성 스크립트]
+${transcript?.trim() || "(제출 안 됨)"}
+
+[제출물 — 게시물 캡션]
+${caption?.trim() || "(제출 안 됨)"}
+
+판정 규칙:
+- 표기 검수: 브랜드명·제품명이 기준 표기와 글자 단위로 같은지 본다. 띄어쓰기, 자모 오타, 대소문자, 한글/영문 혼용, 축약 모두 오기입으로 본다. 아예 언급이 없으면 missing.
+- USP 검수: 자막 또는 음성 스크립트 중 한 곳에라도 의미가 전달되면 ok. 일부만 전달되면 partial, 없으면 missing. 캡션에만 있으면 partial로 본다.
+- 금기사항: 위반이면 violation, 아니면 clear.
+- feedback은 인플루언서가 바로 고칠 수 있게 한국어 존댓말로, 어디를 어떻게 바꿀지 구체적으로 쓴다. 문제 없으면 빈 배열.
+
+JSON만 출력. 설명·마크다운 금지.
+{
+ "naming":{"status":"ok|typo|missing","found":["실제 등장한 표기"],
+   "issues":[{"where":"자막|음성|캡션","t":초(모르면 null),"wrong":"잘못된 표기","correct":"올바른 표기"}]},
+ "usps":[{"i":1,"usp":"기준 문구","status":"ok|partial|missing","where":"자막|음성|캡션|없음","t":초 또는 null,"evidence":"근거가 된 실제 문장"}],
+ "taboos":[{"i":1,"taboo":"기준 문구","status":"clear|violation","where":"자막|음성|캡션|없음","t":초 또는 null,"evidence":"근거 문장"}],
+ "summary":"검수 결과 한 문장 요약",
+ "feedback":["수정 요청 1","수정 요청 2"]
+}`;
+  return await askJSON([{ type: "text", text: prompt }]);
+}
+
+/* 판정은 코드에서 결정 (일관성) */
+function decide(r) {
+  if (!r) return "fix";
+  const bad =
+    r.naming?.status !== "ok" ||
+    (r.usps || []).some((u) => u.status !== "ok") ||
+    (r.taboos || []).some((t) => t.status === "violation");
+  return bad ? "fix" : "pass";
+}
+
+/* ─────────── 앱 ─────────── */
+export default function App() {
+  const [role, setRole] = useState("marketer");
+  const [campaign, setCampaign] = useState(null);
+  const [roster, setRoster] = useState([]);
+  const [meId, setMeId] = useState(null);
+  const [openId, setOpenId] = useState(null);
+  const [store, setStore] = useState({ state: "loading", at: null });
+  const [confirmReset, setConfirmReset] = useState(false);
+  const ready = useRef(false);
+
+  /* 저장된 캠페인 복원 */
+  useEffect(() => {
+    (async () => {
+      const saved = await loadState();
+      if (saved) {
+        setCampaign(saved.campaign || null);
+        setRoster(saved.roster || []);
+        setStore({ state: "saved", at: saved.savedAt });
+      } else {
+        setStore({ state: "empty", at: null });
+      }
+      ready.current = true;
+    })();
+  }, []);
+
+  /* 변경되면 자동 저장 */
+  useEffect(() => {
+    if (!ready.current) return;
+    if (!campaign && !roster.length) return;
+    setStore((s) => ({ ...s, state: "saving" }));
+    const timer = setTimeout(async () => {
+      const r = await saveState({ campaign, roster });
+      setStore(r.ok ? { state: "saved", at: r.at } : { state: "error", at: null });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [campaign, roster]);
+
+  useEffect(() => { if (!meId && roster.length) setMeId(roster[0].id); }, [roster, meId]);
+
+  const reset = async () => {
+    if (!confirmReset) return setConfirmReset(true);
+    await clearState();
+    setCampaign(null); setRoster([]); setMeId(null); setOpenId(null);
+    setConfirmReset(false);
+    setStore({ state: "empty", at: null });
+  };
+
+  const saveLabel = {
+    loading: "불러오는 중",
+    empty: "저장할 내용 없음",
+    saving: "저장 중",
+    saved: store.at ? `저장됨 ${new Date(store.at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}` : "저장됨",
+    error: "저장 실패",
+  }[store.state];
+
+  const patch = (id, obj) =>
+    setRoster((rs) => rs.map((r) => (r.id === id ? { ...r, ...obj } : r)));
+
+  const me = roster.find((r) => r.id === meId) || null;
+  const opened = roster.find((r) => r.id === openId) || null;
+
+  return (
+    <div className="rc">
+      <style>{CSS}</style>
+
+      <div className="bar">
+        <span className="brand">REEL<em>·</em>CHECK</span>
+        <span className="bar-sub">1차 검수</span>
+        <span className="spacer" />
+        <span className="save">
+          <span style={{ color: store.state === "error" ? "#E0A9A9" : undefined }}>{saveLabel}</span>
+          {(campaign || roster.length > 0) && (
+            <button onClick={reset} onBlur={() => setConfirmReset(false)} data-warn={confirmReset ? "1" : "0"}>
+              {confirmReset ? "정말 지울까요?" : "초기화"}
+            </button>
+          )}
+        </span>
+        {role === "influencer" && roster.length > 0 && (
+          <select className="who" value={meId || ""} onChange={(e) => setMeId(e.target.value)}>
+            {roster.map((r) => (
+              <option key={r.id} value={r.id}>{r.name}</option>
+            ))}
+          </select>
+        )}
+        <div className="roles">
+          <button data-on={role === "marketer" ? "1" : "0"} onClick={() => setRole("marketer")}>마케터</button>
+          <button data-on={role === "influencer" ? "1" : "0"} onClick={() => setRole("influencer")}>인플루언서</button>
+        </div>
+      </div>
+
+      <div className="wrap">
+        {role === "marketer" ? (
+          <Marketer
+            campaign={campaign} setCampaign={setCampaign}
+            roster={roster} setRoster={setRoster}
+            openId={openId} setOpenId={setOpenId}
+          />
+        ) : (
+          <Influencer campaign={campaign} me={me} patch={patch} />
+        )}
+      </div>
+
+      {opened && (
+        <FeedbackModal
+          person={opened}
+          campaign={campaign}
+          onClose={() => setOpenId(null)}
+          onSave={(obj) => { patch(opened.id, obj); setOpenId(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─────────── 마케터 ─────────── */
+function Marketer({ campaign, setCampaign, roster, setRoster, openId, setOpenId }) {
+  const [step, setStep] = useState(campaign ? (roster.length ? 3 : 2) : 1);
+  return (
+    <>
+      <div className="eyebrow">마케터</div>
+      <h1 className="h1">{campaign ? campaign.brand : "새 캠페인"}</h1>
+      <p className="lede">
+        캠페인 기준을 등록하면 인플루언서가 올린 영상을 자막·음성·캡션 단위로 쪼개
+        브랜드명 표기, USP 반영, 금기사항 위반을 자동으로 점검합니다.
+      </p>
+
+      <div className="steps">
+        {[
+          [1, "캠페인 기준"],
+          [2, "인플루언서 명단"],
+          [3, "검수 현황"],
+        ].map(([n, t]) => (
+          <button key={n} data-on={step === n ? "1" : "0"} onClick={() => setStep(n)}>
+            <span className="n">0{n}</span>{t}
+          </button>
+        ))}
+      </div>
+
+      {step === 1 && (
+        <CampaignForm
+          value={campaign}
+          onSave={(c) => { setCampaign(c); setStep(2); }}
+        />
+      )}
+      {step === 2 && (
+        <RosterPanel
+          roster={roster} setRoster={setRoster}
+          onDone={() => setStep(3)}
+        />
+      )}
+      {step === 3 && (
+        <Dashboard campaign={campaign} roster={roster} onOpen={setOpenId} />
+      )}
+    </>
+  );
+}
+
+function CampaignForm({ value, onSave }) {
+  const [brand, setBrand] = useState(value?.brand || "");
+  const [product, setProduct] = useState(value?.product || "");
+  const [usps, setUsps] = useState(value?.usps?.length ? value.usps : [""]);
+  const [taboos, setTaboos] = useState(value?.taboos || []);
+  const [err, setErr] = useState("");
+
+  const setAt = (arr, set) => (i, v) => set(arr.map((x, j) => (j === i ? v : x)));
+  const filled = usps.map((u) => u.trim()).filter(Boolean);
+
+  const save = () => {
+    if (!brand.trim() || !product.trim()) return setErr("브랜드명과 제품명을 입력해주세요.");
+    if (!filled.length) return setErr("USP를 최소 1개 입력해주세요.");
+    setErr("");
+    onSave({
+      brand: brand.trim(),
+      product: product.trim(),
+      usps: filled,
+      taboos: taboos.map((t) => t.trim()).filter(Boolean),
+    });
+  };
+
+  const sample = () => {
+    setBrand("무드랩");
+    setProduct("무드랩 세라마이드 크림밤");
+    setUsps(["세라마이드 5종 12% 함유", "발림 후 3초 만에 흡수", "무향·민감성 피부 테스트 완료"]);
+    setTaboos(["의약품처럼 '치료', '완치' 등 효능 단정 표현 금지", "타 브랜드 실명 비교 금지", "'최저가', '1위' 등 최상급 표현 금지"]);
+    setErr("");
+  };
+
+  return (
+    <>
+      <div className="card">
+        <div className="card-hd">
+          <h2>기준 정보</h2>
+          <span className="tag">검수 기준이 되는 정확한 표기</span>
+          <span className="spacer" />
+          <button className="btn ghost sm" onClick={sample}>예시로 채우기</button>
+        </div>
+        <div className="card-bd">
+          <div className="grid2">
+            <div className="field">
+              <label className="lab" htmlFor="f-brand">브랜드명</label>
+              <input id="f-brand" className="in" value={brand} onChange={(e) => setBrand(e.target.value)}
+                placeholder="예: 무드랩" />
+              <p className="hint">여기 적은 글자와 다르면 오기입으로 잡습니다.</p>
+            </div>
+            <div className="field">
+              <label className="lab" htmlFor="f-prod">제품명</label>
+              <input id="f-prod" className="in" value={product} onChange={(e) => setProduct(e.target.value)}
+                placeholder="예: 무드랩 세라마이드 크림밤" />
+              <p className="hint">띄어쓰기까지 실제 표기 그대로 넣어주세요.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-hd">
+          <h2>필수 USP</h2>
+          <span className="tag">{filled.length} / 3 · 영상 자막 또는 음성에 반영 필요</span>
+        </div>
+        <div className="card-bd">
+          {usps.map((u, i) => (
+            <div className="field" key={i}>
+              <label className="lab">USP {i + 1}</label>
+              <div className="row">
+                <input className="in" value={u} onChange={(e) => setAt(usps, setUsps)(i, e.target.value)}
+                  placeholder="영상에 꼭 들어가야 하는 한 가지 메시지" />
+                {usps.length > 1 && (
+                  <button className="btn ghost icon" aria-label={`USP ${i + 1} 삭제`}
+                    onClick={() => setUsps(usps.filter((_, j) => j !== i))}>–</button>
+                )}
+              </div>
+            </div>
+          ))}
+          {usps.length < 3 && (
+            <button className="btn ghost sm" style={{ marginTop: 13 }} onClick={() => setUsps([...usps, ""])}>
+              USP 추가
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-hd">
+          <h2>금기사항</h2>
+          <span className="tag">{taboos.length} / 5 · 선택</span>
+        </div>
+        <div className="card-bd">
+          {taboos.length === 0 && <p className="hint" style={{ marginTop: 0 }}>등록한 금기사항이 없습니다. 없어도 검수는 진행됩니다.</p>}
+          {taboos.map((t, i) => (
+            <div className="field" key={i}>
+              <label className="lab">금기 {i + 1}</label>
+              <div className="row">
+                <input className="in" value={t} onChange={(e) => setAt(taboos, setTaboos)(i, e.target.value)}
+                  placeholder="예: 의약품처럼 효능을 단정하는 표현 금지" />
+                <button className="btn ghost icon" aria-label={`금기 ${i + 1} 삭제`}
+                  onClick={() => setTaboos(taboos.filter((_, j) => j !== i))}>–</button>
+              </div>
+            </div>
+          ))}
+          {taboos.length < 5 && (
+            <button className="btn ghost sm" style={{ marginTop: taboos.length ? 13 : 10 }}
+              onClick={() => setTaboos([...taboos, ""])}>금기사항 추가</button>
+          )}
+        </div>
+      </div>
+
+      {err && <div className="err" style={{ marginTop: 14 }}>{err}</div>}
+      <div style={{ marginTop: 16 }}>
+        <button className="btn" onClick={save}>기준 저장하고 명단 올리기</button>
+      </div>
+    </>
+  );
+}
+
+function RosterPanel({ roster, setRoster, onDone }) {
+  const [err, setErr] = useState("");
+  const [over, setOver] = useState(false);
+  const fileRef = useRef(null);
+
+  const pick = (row) => {
+    const get = (...keys) => {
+      for (const k of Object.keys(row)) {
+        const n = String(k).trim().toLowerCase().replace(/\s/g, "");
+        if (keys.includes(n)) return String(row[k] ?? "").trim();
+      }
+      return "";
+    };
+    return {
+      name: get("이름", "성명", "name", "인플루언서", "인플루언서명", "닉네임"),
+      handle: get("계정", "핸들", "아이디", "handle", "id", "인스타", "instagram", "채널"),
+      email: get("이메일", "email", "메일", "연락처"),
+    };
+  };
+
+  const ingest = (rows) => {
+    const people = rows.map(pick).filter((p) => p.name || p.handle);
+    if (!people.length) {
+      setErr("이름을 찾지 못했습니다. 첫 줄에 ‘이름’ 또는 ‘name’ 열이 있는지 확인해주세요.");
+      return;
+    }
+    setErr("");
+    setRoster(people.map((p) => ({
+      id: uid(),
+      name: p.name || p.handle,
+      handle: p.handle,
+      email: p.email,
+      status: "미제출",
+      submission: null,
+      review: null,
+      verdict: null,
+      marketerNote: "",
+      decision: "",
+    })));
+  };
+
+  const read = (file) => {
+    const name = (file.name || "").toLowerCase();
+    if (name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt")) {
+      Papa.parse(file, {
+        header: true, skipEmptyLines: true,
+        complete: (res) => ingest(res.data),
+        error: () => setErr("CSV를 읽지 못했습니다. 파일을 다시 저장해 올려주세요."),
+      });
+    } else {
+      const fr = new FileReader();
+      fr.onload = () => {
+        try {
+          const wb = XLSX.read(fr.result, { type: "array" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          ingest(XLSX.utils.sheet_to_json(ws, { defval: "" }));
+        } catch {
+          setErr("엑셀 파일을 읽지 못했습니다. .xlsx 또는 .csv로 저장해 올려주세요.");
+        }
+      };
+      fr.readAsArrayBuffer(file);
+    }
+  };
+
+  const sample = () => {
+    const names = [
+      ["김하늘", "@haneul.daily", "haneul@mail.com"],
+      ["박서준", "@seojun_log", "seojun@mail.com"],
+      ["이유리", "@yuri.skin", "yuri@mail.com"],
+      ["정민아", "@mina.beauty", "mina@mail.com"],
+      ["최도윤", "@doyoon.room", "doyoon@mail.com"],
+    ];
+    setErr("");
+    setRoster(names.map(([name, handle, email]) => ({
+      id: uid(), name, handle, email, status: "미제출",
+      submission: null, review: null, verdict: null, marketerNote: "", decision: "",
+    })));
+  };
+
+  return (
+    <>
+      <div className="card">
+        <div className="card-hd">
+          <h2>확정 인플루언서 명단</h2>
+          <span className="tag">CSV · XLSX · 스프레드시트 내보내기 파일</span>
+        </div>
+        <div className="card-bd">
+          <div className="drop" data-over={over ? "1" : "0"}
+            onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+            onDragLeave={() => setOver(false)}
+            onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) read(f); }}>
+            <div className="big">명단 파일을 여기에 끌어다 놓으세요</div>
+            <div className="sub">첫 줄에 이름 / 계정 / 이메일 열이 있으면 자동으로 맞춰 읽습니다</div>
+            <div className="row" style={{ justifyContent: "center", marginTop: 16 }}>
+              <button className="btn" onClick={() => fileRef.current?.click()}>파일 선택</button>
+              <button className="btn ghost" onClick={sample}>예시 명단 넣기</button>
+            </div>
+            <input ref={fileRef} type="file" accept=".csv,.tsv,.txt,.xlsx,.xls" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) read(f); e.target.value = ""; }} />
+          </div>
+          {err && <div className="err" style={{ marginTop: 13 }}>{err}</div>}
+        </div>
+      </div>
+
+      {roster.length > 0 && (
+        <div className="card">
+          <div className="card-hd">
+            <h2>불러온 인플루언서</h2>
+            <span className="tag">{roster.length}명</span>
+            <span className="spacer" />
+            <button className="btn sm" onClick={onDone}>검수 현황으로</button>
+          </div>
+          <div className="card-bd" style={{ padding: 0 }}>
+            <table className="tbl">
+              <thead><tr><th>이름</th><th>계정</th><th>이메일</th></tr></thead>
+              <tbody>
+                {roster.map((r) => (
+                  <tr key={r.id}>
+                    <td style={{ fontWeight: 600 }}>{r.name}</td>
+                    <td style={{ fontFamily: "var(--mono)", fontSize: 11.5 }}>{r.handle || "—"}</td>
+                    <td style={{ color: "var(--graphite)" }}>{r.email || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function Dashboard({ campaign, roster, onOpen }) {
+  const s = useMemo(() => {
+    const n = roster.length;
+    const submitted = roster.filter((r) => r.submission).length;
+    const pass = roster.filter((r) => r.verdict === "pass").length;
+    const fix = roster.filter((r) => r.verdict === "fix").length;
+    return { n, submitted, pass, fix, none: n - submitted };
+  }, [roster]);
+
+  const uspRate = useMemo(() => {
+    if (!campaign) return [];
+    return campaign.usps.map((u, i) => {
+      const done = roster.filter((r) => r.review?.usps?.[i]?.status === "ok").length;
+      return { usp: u, done, of: s.submitted };
+    });
+  }, [campaign, roster, s.submitted]);
+
+  if (!campaign) return <div className="card"><div className="empty">캠페인 기준을 먼저 저장해주세요.</div></div>;
+  if (!roster.length) return <div className="card"><div className="empty">인플루언서 명단을 올리면 현황이 여기 표시됩니다.</div></div>;
+
+  return (
+    <>
+      <div className="card">
+        <div className="card-hd">
+          <h2>제출·검수 요약</h2>
+          <span className="tag">{campaign.product}</span>
+        </div>
+        <div className="stats">
+          <div className="stat"><div className="v">{s.submitted}<span style={{ fontSize: 14, color: "var(--mute)" }}>/{s.n}</span></div><div className="k">제출</div></div>
+          <div className="stat"><div className="v" style={{ color: "var(--pass)" }}>{s.pass}</div><div className="k">1차 통과</div></div>
+          <div className="stat"><div className="v" style={{ color: "var(--fix)" }}>{s.fix}</div><div className="k">보완 필요</div></div>
+          <div className="stat"><div className="v" style={{ color: "var(--mute)" }}>{s.none}</div><div className="k">미제출</div></div>
+        </div>
+      </div>
+
+      {s.submitted > 0 && (
+        <div className="card">
+          <div className="card-hd"><h2>USP 반영률</h2><span className="tag">제출물 {s.submitted}건 기준</span></div>
+          <div className="card-bd">
+            {uspRate.map((u, i) => (
+              <div key={i} style={{ marginTop: i ? 14 : 0 }}>
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontSize: 12.5 }}>{u.usp}</span>
+                  <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--graphite)" }}>{u.done}/{u.of}</span>
+                </div>
+                <div style={{ height: 5, background: "var(--line2)", borderRadius: 1, marginTop: 6 }}>
+                  <div style={{ height: "100%", width: `${u.of ? (u.done / u.of) * 100 : 0}%`, background: "var(--pass)", borderRadius: 1 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-hd">
+          <h2>인플루언서별 현황</h2>
+          <span className="tag">이름을 누르면 상세 피드백을 남길 수 있습니다</span>
+        </div>
+        <div className="card-bd" style={{ padding: 0, overflowX: "auto" }}>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>인플루언서</th><th>제출</th><th>1차 검수</th>
+                <th>표기</th><th>USP</th><th>금기</th><th>마케터 확정</th>
+              </tr>
+            </thead>
+            <tbody>
+              {roster.map((r) => {
+                const rv = r.review;
+                const uspOk = rv ? rv.usps.filter((u) => u.status === "ok").length : 0;
+                const tabooBad = rv ? rv.taboos.filter((t) => t.status === "violation").length : 0;
+                return (
+                  <tr key={r.id}>
+                    <td>
+                      <button className="namebtn" onClick={() => onOpen(r.id)}>{r.name}</button>
+                      <div className="handle">{r.handle || "—"}</div>
+                    </td>
+                    <td>{r.submission
+                      ? <span style={{ fontFamily: "var(--mono)", fontSize: 11 }}>{tc(r.submission.duration)} · {r.submission.fileName.slice(0, 18)}</span>
+                      : <span className="st none">미제출</span>}</td>
+                    <td><StatusPill r={r} /></td>
+                    <td>{rv ? <span className={`st ${rv.naming.status === "ok" ? "pass" : "fix"}`}>{rv.naming.status === "ok" ? "정상" : rv.naming.status === "typo" ? "오기입" : "누락"}</span> : "—"}</td>
+                    <td>{rv ? <span className={`st ${uspOk === rv.usps.length ? "pass" : "fix"}`}>{uspOk}/{rv.usps.length}</span> : "—"}</td>
+                    <td>{rv ? (tabooBad ? <span className="st block">위반 {tabooBad}</span> : <span className="st pass">이상 없음</span>) : "—"}</td>
+                    <td>{r.decision
+                      ? <span className={`st ${r.decision === "승인" ? "pass" : "fix"}`}>{r.decision}</span>
+                      : <span style={{ color: "var(--mute)", fontSize: 12 }}>대기</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function StatusPill({ r }) {
+  if (r.status === "검수중") return <span className="st run"><span className="spin" />검수중</span>;
+  if (r.verdict === "pass") return <span className="st pass">통과</span>;
+  if (r.verdict === "fix") return <span className="st fix">보완 필요</span>;
+  return <span className="st none">대기</span>;
+}
+
+/* ─────────── 인플루언서 ─────────── */
+function Influencer({ campaign, me, patch }) {
+  const [file, setFile] = useState(null);
+  const [caption, setCaption] = useState("");
+  const [script, setScript] = useState("");
+  const [steps, setSteps] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [over, setOver] = useState(false);
+  const fileRef = useRef(null);
+
+  if (!campaign) return <div className="card"><div className="empty">마케터가 캠페인 기준을 등록하면 제출 화면이 열립니다.</div></div>;
+  if (!me) return <div className="card"><div className="empty">확정 인플루언서 명단이 올라오면 제출 화면이 열립니다.</div></div>;
+
+  const PIPE = [
+    "영상 파일 확인",
+    "구간 분할 · 프레임 추출",
+    "자막 텍스트 인식",
+    "음성 텍스트 변환",
+    "브랜드명 · 제품명 표기 확인",
+    "USP 반영 확인",
+    "금기사항 확인",
+  ];
+  const mark = (i, s, note) =>
+    setSteps((p) => { const n = [...(p || PIPE.map(() => ({ s: "wait" })))]; n[i] = { s, note }; return n; });
+
+  const submit = async () => {
+    if (!file) return setErr("검수할 영상 파일을 올려주세요.");
+    setErr(""); setBusy(true);
+    setSteps(PIPE.map(() => ({ s: "wait" })));
+    patch(me.id, { status: "검수중", verdict: null, review: null });
+    try {
+      mark(0, "run");
+      mark(0, "done", `${(file.size / 1048576).toFixed(1)}MB`);
+
+      mark(1, "run");
+      let duration, cuts, spoken = "", segments = [], source = "브라우저";
+      if (API_BASE) {
+        try {
+          const s = await serverInspect(file);
+          if (!s.frames?.length) throw new Error("서버가 프레임을 반환하지 않았습니다.");
+          duration = s.duration; cuts = s.frames;
+          spoken = s.transcript || ""; segments = s.segments || [];
+          source = `crv${s.timeSource === "estimated" ? " · 타임코드 근사" : ""}`;
+        } catch (e) {
+          const local = await sliceVideo(file);
+          duration = local.duration; cuts = local.frames;
+          source = `브라우저 · 서버 연결 실패(${e.message.slice(0, 40)})`;
+        }
+      } else {
+        const local = await sliceVideo(file);
+        duration = local.duration; cuts = local.frames;
+      }
+      const frames = pickEven(cuts, OCR_LIMIT);
+      mark(1, "done", `${cuts.length}컷${cuts.length > frames.length ? ` → ${frames.length}컷 판독` : ""} · ${tc(duration)} · ${source}`);
+
+      mark(2, "run");
+      const ocr = await readSubtitles(frames);
+      const withText = ocr.filter((o) => o.subtitle || o.onScreen).length;
+      mark(2, "done", `${withText}컷에서 텍스트 확인`);
+
+      /* 서버 전사가 있으면 그걸 쓰고, 없으면 인플루언서가 입력한 스크립트를 쓴다 */
+      const heard = segments.length
+        ? segments.map((s) => `${tc(s.start)} ${s.text}`).join("\n")
+        : script.trim();
+      if (spoken && !script.trim()) setScript(spoken);
+      mark(3, heard ? "done" : "skip",
+        segments.length ? `Whisper · ${segments.length}구간`
+          : script.trim() ? `직접 입력 ${script.trim().length}자`
+            : "음성 텍스트 없음");
+
+      mark(4, "run"); mark(5, "run"); mark(6, "run");
+      const review = await runReview({ campaign, ocr, transcript: heard, caption });
+      review.naming = review.naming || { status: "missing", found: [], issues: [] };
+      review.naming.found = review.naming.found || [];
+      review.naming.issues = review.naming.issues || [];
+      review.summary = review.summary || "검수를 마쳤습니다. 항목별 결과를 확인해주세요.";
+      review.feedback = review.feedback || [];
+      review.usps = campaign.usps.map((u, i) => review.usps?.[i] || { i: i + 1, usp: u, status: "missing", where: "없음", t: null, evidence: "" });
+      review.taboos = campaign.taboos.map((t, i) => review.taboos?.[i] || { i: i + 1, taboo: t, status: "clear", where: "없음", t: null, evidence: "" });
+      mark(4, "done", review.naming.status === "ok" ? "정상" : "확인 필요");
+      mark(5, "done", `${review.usps.filter((u) => u.status === "ok").length}/${review.usps.length} 반영`);
+      mark(6, "done", review.taboos.some((t) => t.status === "violation") ? "위반 발견" : "이상 없음");
+
+      const verdict = decide(review);
+      patch(me.id, {
+        status: verdict === "pass" ? "통과" : "보완 필요",
+        verdict, review,
+        submission: {
+          fileName: file.name, duration, frames, cutCount: cuts.length,
+          ocr, caption: caption.trim(),
+          script: spoken || script.trim(),
+          sttSource: segments.length ? "Whisper" : script.trim() ? "직접 입력" : "없음",
+          at: new Date().toLocaleString("ko-KR"),
+        },
+      });
+    } catch (e) {
+      setErr(e.message || "검수 중 문제가 생겼습니다. 잠시 후 다시 시도해주세요.");
+      patch(me.id, { status: "미제출" });
+      setSteps((p) => (p || []).map((x) => (x.s === "run" ? { s: "wait" } : x)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const done = me.review && me.submission;
+
+  return (
+    <>
+      <div className="eyebrow">인플루언서 · {me.name}</div>
+      <h1 className="h1">{campaign.product}</h1>
+      <p className="lede">
+        영상을 올리면 자막과 음성을 읽어 브랜드명 표기, 필수 메시지, 금기사항을 바로 확인해드립니다.
+        통과하면 마케터에게 자동으로 전달됩니다.
+      </p>
+
+      <div className="card" style={{ marginTop: 20 }}>
+        <div className="card-hd"><h2>지켜야 할 것</h2><span className="tag">캠페인 기준</span></div>
+        <div className="card-bd">
+          <dl className="kv">
+            <dt>브랜드</dt><dd><strong>{campaign.brand}</strong></dd>
+            <dt>제품</dt><dd><strong>{campaign.product}</strong></dd>
+            <dt>필수 메시지</dt>
+            <dd>{campaign.usps.map((u, i) => <div key={i} style={{ marginTop: i ? 4 : 0 }}>· {u}</div>)}</dd>
+            {campaign.taboos.length > 0 && (
+              <>
+                <dt>금기</dt>
+                <dd>{campaign.taboos.map((t, i) => <div key={i} style={{ marginTop: i ? 4 : 0, color: "var(--block)" }}>· {t}</div>)}</dd>
+              </>
+            )}
+          </dl>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-hd"><h2>콘텐츠 제출</h2><span className="tag">영상 · 캡션 · 스크립트</span></div>
+        <div className="card-bd">
+          <div className="drop" data-over={over ? "1" : "0"}
+            onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+            onDragLeave={() => setOver(false)}
+            onDrop={(e) => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) { setFile(f); setErr(""); } }}>
+            {file ? (
+              <>
+                <div className="big">{file.name}</div>
+                <div className="sub">{(file.size / 1048576).toFixed(1)}MB · 다른 파일로 바꾸려면 다시 선택하세요</div>
+              </>
+            ) : (
+              <>
+                <div className="big">영상 파일을 여기에 끌어다 놓으세요</div>
+                <div className="sub">mp4 · mov · webm</div>
+              </>
+            )}
+            <div style={{ marginTop: 16 }}>
+              <button className="btn ghost" onClick={() => fileRef.current?.click()}>
+                {file ? "파일 변경" : "파일 선택"}
+              </button>
+            </div>
+            <input ref={fileRef} type="file" accept="video/*" style={{ display: "none" }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) { setFile(f); setErr(""); } e.target.value = ""; }} />
+          </div>
+
+          <div className="grid2" style={{ marginTop: 16 }}>
+            <div className="field">
+              <label className="lab" htmlFor="f-cap">게시물 캡션</label>
+              <textarea id="f-cap" className="ta" value={caption} onChange={(e) => setCaption(e.target.value)}
+                placeholder="업로드할 때 함께 쓸 본문을 그대로 붙여넣어주세요" />
+            </div>
+            <div className="field">
+              <label className="lab" htmlFor="f-scr">음성 스크립트</label>
+              <textarea id="f-scr" className="ta" value={script} onChange={(e) => setScript(e.target.value)}
+                placeholder="영상에서 말한 내용을 붙여넣어주세요" />
+              <p className="hint">
+                {API_BASE
+                  ? "비워두면 영상 음성에서 자동으로 받아씁니다."
+                  : "음성 자동 변환은 검수 서버를 연결하면 켜집니다. 지금은 말한 내용을 붙여넣으면 함께 검수합니다."}
+              </p>
+            </div>
+          </div>
+
+          {err && <div className="err" style={{ marginTop: 14 }}>{err}</div>}
+
+          <div className="row" style={{ marginTop: 16 }}>
+            <button className="btn stamp" onClick={submit} disabled={busy}>
+              {busy ? "검수 중…" : "제출하고 검수받기"}
+            </button>
+            {done && !busy && <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--mute)" }}>
+              최근 제출 {me.submission.at}
+            </span>}
+          </div>
+        </div>
+      </div>
+
+      {steps && (
+        <div className="card">
+          <div className="card-hd"><h2>검수 진행</h2><span className="tag">7단계</span></div>
+          <div className="card-bd">
+            <div className="pipe">
+              {PIPE.map((t, i) => {
+                const st = steps[i]?.s || "wait";
+                return (
+                  <div className="pstep" key={i} data-s={st}>
+                    <span className="dot">{st === "done" ? "●" : st === "run" ? "◐" : st === "skip" ? "○" : "·"}</span>
+                    <span>{t}</span>
+                    <span className="note">{steps[i]?.note || (st === "run" ? "진행 중" : st === "skip" ? "건너뜀" : "")}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {done && <Report person={me} campaign={campaign} />}
+    </>
+  );
+}
+
+/* ─────────── 시그니처: 검수 스트립 + 리포트 ─────────── */
+function Strip({ submission, review }) {
+  const { frames, ocr, duration } = submission;
+  const hits = useMemo(() => {
+    const map = frames.map(() => ({ pass: false, warn: false, block: false }));
+    const near = (t) => {
+      if (t == null || !isFinite(t)) return -1;
+      let best = -1, d = 1e9;
+      frames.forEach((f, i) => { const x = Math.abs(f.t - t); if (x < d) { d = x; best = i; } });
+      return best;
+    };
+    (review.usps || []).forEach((u) => { const i = near(u.t); if (i >= 0 && u.status === "ok") map[i].pass = true; });
+    (review.naming?.issues || []).forEach((s) => { const i = near(s.t); if (i >= 0) map[i].warn = true; });
+    (review.taboos || []).forEach((t) => { const i = near(t.t); if (i >= 0 && t.status === "violation") map[i].block = true; });
+    return map;
+  }, [frames, review]);
+
+  const level = (h) => (h.block ? 3 : h.warn ? 2 : h.pass ? 1 : 0);
+  const type = (h) => (h.block ? "block" : h.warn ? "warn" : h.pass ? "pass" : "");
+
+  return (
+    <div className="strip-wrap">
+      <div className="strip-hd">
+        <span>구간별 검수 · {frames.length}컷{submission.framesDropped ? " · 화면 미저장" : ""}</span>
+        <span>총 {tc(duration)}</span>
+      </div>
+      <div className="strip">
+        {frames.map((f, i) => (
+          <div className="seg" key={i} data-hit={level(hits[i])}>
+            {f.dataUrl
+              ? <img className="thumb" src={f.dataUrl} alt={`${tc(f.t)} 구간 화면`} />
+              : <div className="ph" aria-label="저장하지 않은 화면">—</div>}
+            <div className="tc">{tc(f.t)}</div>
+            <div className="cap">{ocr[i]?.subtitle || ocr[i]?.onScreen || ""}</div>
+          </div>
+        ))}
+      </div>
+      <div className="marks">
+        {hits.map((h, i) => <div className="mark" key={i} data-t={type(h)} />)}
+      </div>
+      <div className="legend">
+        <span><i style={{ background: "#2E8B69" }} />USP 확인</span>
+        <span><i style={{ background: "#E0A02A" }} />표기 확인 필요</span>
+        <span><i style={{ background: "#E05B4A" }} />금기 위반</span>
+      </div>
+    </div>
+  );
+}
+
+function Report({ person, campaign }) {
+  const r = person.review, sub = person.submission;
+  const pass = person.verdict === "pass";
+  return (
+    <>
+      <div className="card">
+        <div className="card-hd">
+          <h2>검수 결과</h2>
+          <span className="tag">{sub.at}{sub.sttSource ? ` · 음성 ${sub.sttSource}` : ""}</span>
+        </div>
+        <div className="card-bd">
+          <div className="verdict">
+            <div className={`seal ${pass ? "pass" : "fix"}`}>
+              <div>
+                <div className="t">{pass ? "PASS" : "REDO"}</div>
+                <div className="s">{pass ? "1ST CHECK" : "NEEDS FIX"}</div>
+              </div>
+            </div>
+            <div className="msg">
+              <strong>{pass ? "1차 검수를 통과했습니다." : "아래 항목을 고쳐 다시 올려주세요."}</strong>
+              <div style={{ marginTop: 6 }}>{r.summary}</div>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 16 }}><Strip submission={sub} review={r} /></div>
+
+          {r.feedback?.length > 0 && (
+            <div className="sec" style={{ marginTop: 18 }}>
+              <p className="sec-t">수정 요청</p>
+              <div className="checks">
+                {r.feedback.map((f, i) => (
+                  <div className="check" key={i}>
+                    <div className="row" style={{ alignItems: "flex-start", gap: 9 }}>
+                      <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--fix)", paddingTop: 2 }}>{String(i + 1).padStart(2, "0")}</span>
+                      <span className="ttl" style={{ fontWeight: 500 }}>{f}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="sec">
+            <p className="sec-t">브랜드명 · 제품명 표기</p>
+            <div className="checks">
+              <div className="check">
+                <div className="top">
+                  <span className="ttl">{campaign.brand} / {campaign.product}</span>
+                  <span className={`st ${r.naming.status === "ok" ? "pass" : "fix"}`}>
+                    {r.naming.status === "ok" ? "정상 표기" : r.naming.status === "typo" ? "오기입" : "언급 없음"}
+                  </span>
+                </div>
+                {r.naming.found?.length > 0 && (
+                  <div className="ev">확인된 표기: {r.naming.found.join(" · ")}</div>
+                )}
+                {r.naming.issues?.map((s, i) => (
+                  <div className="ev" key={i} style={{ borderLeftColor: "var(--fix)" }}>
+                    <span className="tc">{s.where}{s.t != null ? ` ${tc(s.t)}` : ""}</span><br />
+                    “{s.wrong}” → <strong>{s.correct}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="sec">
+            <p className="sec-t">필수 USP</p>
+            <div className="checks">
+              {r.usps.map((u, i) => (
+                <div className="check" key={i}>
+                  <div className="top">
+                    <span className="ttl">{u.usp}</span>
+                    <span className={`st ${u.status === "ok" ? "pass" : u.status === "partial" ? "fix" : "block"}`}>
+                      {u.status === "ok" ? "반영" : u.status === "partial" ? "일부만" : "누락"}
+                    </span>
+                  </div>
+                  {u.evidence && (
+                    <div className="ev">
+                      <span className="tc">{u.where}{u.t != null ? ` ${tc(u.t)}` : ""}</span><br />{u.evidence}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {r.taboos.length > 0 && (
+            <div className="sec">
+              <p className="sec-t">금기사항</p>
+              <div className="checks">
+                {r.taboos.map((t, i) => (
+                  <div className="check" key={i}>
+                    <div className="top">
+                      <span className="ttl">{t.taboo}</span>
+                      <span className={`st ${t.status === "violation" ? "block" : "pass"}`}>
+                        {t.status === "violation" ? "위반" : "이상 없음"}
+                      </span>
+                    </div>
+                    {t.status === "violation" && t.evidence && (
+                      <div className="ev" style={{ borderLeftColor: "var(--block)" }}>
+                        <span className="tc">{t.where}{t.t != null ? ` ${tc(t.t)}` : ""}</span><br />{t.evidence}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {person.marketerNote && (
+        <div className="card">
+          <div className="card-hd">
+            <h2>마케터 피드백</h2>
+            {person.decision && <span className={`st ${person.decision === "승인" ? "pass" : "fix"}`}>{person.decision}</span>}
+          </div>
+          <div className="card-bd">
+            <div className="note-box" style={{ whiteSpace: "pre-wrap" }}>{person.marketerNote}</div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+/* ─────────── 상세 피드백 팝업 ─────────── */
+function FeedbackModal({ person, campaign, onClose, onSave }) {
+  const [note, setNote] = useState(person.marketerNote || "");
+  const [decision, setDecision] = useState(person.decision || "");
+  const r = person.review;
+
+  useEffect(() => {
+    const h = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const useAuto = () => {
+    if (!r) return;
+    const lines = [r.summary, ...(r.feedback || []).map((f) => `· ${f}`)].filter(Boolean);
+    setNote((n) => (n ? n + "\n" + lines.join("\n") : lines.join("\n")));
+  };
+
+  return (
+    <div className="mask" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={`${person.name} 상세 피드백`}>
+        <div className="modal-hd">
+          <div>
+            <h3>{person.name}</h3>
+            <div className="handle">{person.handle || "계정 미입력"} · {person.email || "이메일 미입력"}</div>
+          </div>
+          <span className="spacer" />
+          <StatusPill r={person} />
+          <button className="close" onClick={onClose} aria-label="닫기">×</button>
+        </div>
+
+        <div className="modal-bd">
+          {!r ? (
+            <div className="empty" style={{ padding: "20px 0" }}>아직 제출물이 없습니다. 피드백은 제출 후 남길 수 있습니다.</div>
+          ) : (
+            <>
+              <div className="sec" style={{ marginTop: 0 }}>
+                <p className="sec-t">1차 검수 요약</p>
+                <div className="note-box">{r.summary}</div>
+              </div>
+
+              <div className="sec">
+                <p className="sec-t">항목별 결과</p>
+                <div className="checks">
+                  <div className="check">
+                    <div className="top">
+                      <span className="ttl">브랜드명 · 제품명 표기</span>
+                      <span className={`st ${r.naming.status === "ok" ? "pass" : "fix"}`}>
+                        {r.naming.status === "ok" ? "정상" : r.naming.status === "typo" ? "오기입" : "누락"}
+                      </span>
+                    </div>
+                    {r.naming.issues?.map((s, i) => (
+                      <div className="ev" key={i}>
+                        <span className="tc">{s.where}{s.t != null ? ` ${tc(s.t)}` : ""}</span> “{s.wrong}” → <strong>{s.correct}</strong>
+                      </div>
+                    ))}
+                  </div>
+                  {r.usps.map((u, i) => (
+                    <div className="check" key={`u${i}`}>
+                      <div className="top">
+                        <span className="ttl">USP {i + 1} · {u.usp}</span>
+                        <span className={`st ${u.status === "ok" ? "pass" : u.status === "partial" ? "fix" : "block"}`}>
+                          {u.status === "ok" ? "반영" : u.status === "partial" ? "일부만" : "누락"}
+                        </span>
+                      </div>
+                      {u.evidence && <div className="ev"><span className="tc">{u.where}{u.t != null ? ` ${tc(u.t)}` : ""}</span> {u.evidence}</div>}
+                    </div>
+                  ))}
+                  {r.taboos.filter((t) => t.status === "violation").map((t, i) => (
+                    <div className="check" key={`t${i}`}>
+                      <div className="top">
+                        <span className="ttl">금기 · {t.taboo}</span>
+                        <span className="st block">위반</span>
+                      </div>
+                      {t.evidence && <div className="ev" style={{ borderLeftColor: "var(--block)" }}>{t.evidence}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {person.submission && (
+                <div className="sec">
+                  <p className="sec-t">제출물</p>
+                  <Strip submission={person.submission} review={r} />
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="sec">
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+              <p className="sec-t" style={{ margin: 0 }}>상세 피드백</p>
+              {r && <button className="btn ghost sm" onClick={useAuto}>검수 결과 가져오기</button>}
+            </div>
+            <textarea className="ta" style={{ marginTop: 8, minHeight: 120 }} value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="인플루언서에게 그대로 전달됩니다. 어디를 어떻게 고쳤으면 좋겠는지 적어주세요." />
+          </div>
+
+          <div className="sec">
+            <p className="sec-t">확정 처리</p>
+            <div className="row">
+              {["승인", "재촬영 요청"].map((d) => (
+                <button key={d} className={`btn ${decision === d ? "" : "ghost"} sm`}
+                  onClick={() => setDecision(decision === d ? "" : d)}>{d}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="modal-ft">
+          <button className="btn ghost" onClick={onClose}>취소</button>
+          <button className="btn stamp" onClick={() => onSave({ marketerNote: note, decision })}>
+            피드백 보내기
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
