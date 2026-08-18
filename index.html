@@ -4,15 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>REELCHECK — 나노 인플루언서 콘텐츠 1차 검수 플랫폼</title>
-    
-    <!-- 🛡️ 사내 보안 서버 통과용 전 세계 표준 CDN 주소로 전면 교체 -->
-    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cloudflare.com" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
     <style>
+        /* 사내 보안 통과를 위해 스타일시트 내부 자원만 활용 */
         .rc { --paper:#EFF1EC; --panel:#FFFFFF; --ink:#14181B; --graphite:#4A5257;
           --mute:#858E88; --line:#D6DBD3; --line2:#E7EAE4;
           --stamp:#7A2233; --pass:#17654C; --fix:#A96D08; --block:#9E2016;
@@ -35,7 +28,6 @@
         .lede { color:var(--graphite); font-size:13.5px; margin:8px 0 20px; max-width:62ch; }
         .card { background:var(--panel); border:1px solid var(--line); border-radius:3px; padding:16px; margin-top:14px; }
         .card-hd { display:flex; align-items:baseline; gap:10px; padding-bottom:13px; border-bottom:1px solid var(--line2); margin-bottom:16px; }
-        .card-hd h2 { margin:0; font-size:13.5px; font-weight:650; }
         .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
         .lab { display:block; font-family:var(--mono); font-size:10px; color:var(--graphite); margin-bottom:6px; }
         .in { width:100%; background:#FBFCFA; border:1px solid var(--line); border-radius:2px; padding:9px 10px; font-size:13.5px; }
@@ -51,86 +43,10 @@
         .drop { border:1px dashed var(--line); border-radius:3px; background:#FBFCFA; padding:34px 20px; text-align:center; }
         .st { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10px; padding:4px 8px; border-radius:2px; border:1px solid currentColor; }
         .st.pass { color:var(--pass); background:#EDF5F1; }
-        .st.block { color:var(--block); background:#FBEDEB; }
     </style>
 </head>
 <body class="rc">
+    <!-- ⚠️ 외부 CDN 스크립트 일절 없음: 오직 내부 root 인젝션 주입만 사용 -->
     <div id="root"></div>
-
-    <!-- 구형/신형 보안 인프라 모두 호환되는 컴파일 옵션 설정 -->
-    <script type="text/transform" data-plugins="transform-es2015-modules-umd"></script>
-    <script type="text/babel">
-        var useState = React.useState;
-
-        function App() {
-            var [role, setRole] = useState("marketer");
-            var [step, setStep] = useState(1);
-            var [campaign, setCampaign] = useState({ brand: "", product: "" });
-            var [influencers] = useState([
-                { id: 1, name: "김나노", handle: "@nano_review", status: "미제출", result: "-" },
-                { id: 2, name: "이리뷰", handle: "@lee_vlog", status: "검수완료", result: "통과" }
-            ]);
-
-            return (
-                <div>
-                    <div className="bar">
-                        <div className="brand">REEL<em>CHECK</em></div>
-                        <div className="bar-sub">NANO-INFLUENCER PLATFORM</div>
-                        <div className="spacer"></div>
-                        <div className="roles">
-                            <button className={role === "marketer" ? "active" : ""} onClick={() => setRole("marketer")}>MARKETER</button>
-                            <button className={role === "influencer" ? "active" : ""} onClick={() => setRole("influencer")}>INFLUENCER</button>
-                        </div>
-                    </div>
-
-                    <div className="wrap">
-                        <span className="eyebrow">AUTOMATED CONTENT VERIFICATION</span>
-                        <h1 style={{fontSize: "27px", margin: "6px 0 0"}}>인플루언서 콘텐츠 1차 검수 대시보드</h1>
-                        <p className="lede">AI 기술을 기반으로 숏폼 영상의 자막, 오디오를 자동 실시간 선별합니다.</p>
-
-                        {role === "marketer" ? (
-                            <div>
-                                <div className="steps">
-                                    <button className={step === 1 ? "active" : ""} onClick={() => setStep(1)}>1. 캠페인 가이드 설정</button>
-                                    <button className={step === 2 ? "active" : ""} onClick={() => setStep(2)}>2. 대상 인플루언서 관리</button>
-                                </div>
-
-                                {step === 1 ? (
-                                    <div className="card">
-                                        <div className="card-hd"><h2>캠페인 규칙 설정</h2></div>
-                                        <div className="grid2">
-                                            <div>
-                                                <label className="lab">브랜드명</label>
-                                                <input className="in" placeholder="예: 나노뷰티" value={campaign.brand} onChange={(e)=>setCampaign({...campaign, brand: e.target.value})} />
-                                            </div>
-                                            <div>
-                                                <label className="lab">제품명</label>
-                                                <input className="in" placeholder="예: 수분 크림 에센스" value={campaign.product} onChange={(e)=>setCampaign({...campaign, product: e.target.value})} />
-                                            </div>
-                                        </div>
-                                        <button className="btn stamp" style={{marginTop: '20px'}} onClick={() => alert('저장되었습니다.')}>규칙 저장하기</button>
-                                    </div>
-                                ) : (
-                                    <div className="card">
-                                        <div className="card-hd"><h2>인플루언서 검수 현황 리스트</h2></div>
-                                        <table className="tbl">
-                                            <thead>
-                                                <tr>
-                                                    <th>인플루언서 정보</th>
-                                                    <th>제출 상태</th>
-                                                    <th>AI 검수 결과</th>
-                                                    <th>관리</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {influencers.map(function(inf) {
-                                                    return (
-                                                        <tr key={inf.id}>
-                                                            <td>
-                                                                <div style={{fontWeight:600}}>{inf.name}</div>
-                                                                <div style={{color: '#858E88', fontSize: '11px'}}>{inf.handle}</div>
-                                                            </td>
-                                                            <td>{inf.status}</td>
-                                                            <td><span className="st pass">{inf.result}</span></td>
-                                                            <td><button className="btn sm" onClick={() => alert(inf.name + ' 피드백')}>상세 보기</button></td>
-                                                        </tr>
+</body>
+</html>
