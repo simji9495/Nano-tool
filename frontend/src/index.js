@@ -92,6 +92,19 @@ function App() {
       ? Math.round((passCount / (passCount + failCount || 1)) * 100)
       : 0;
 
+  // 🎬 인플루언서별 영상 파일 업로드 처리
+  const handleVideoUpload = (id, file) => {
+    if (!file) return;
+    setInfluencers((prev) =>
+      prev.map((inf) =>
+        inf.id === id
+          ? { ...inf, status: "제출완료", videoName: file.name }
+          : inf,
+      ),
+    );
+    alert(`🎬 ${file.name} 파일이 업로드되었습니다.`);
+  };
+
   return (
     <div>
       {/* 상단 바 */}
@@ -378,7 +391,7 @@ function App() {
               </table>
             </div>
           </div>
-        ) : (
+        ) : influencers.length === 0 ? (
           <div
             className="card"
             style={{ padding: "30px", textAlign: "center" }}
@@ -394,6 +407,60 @@ function App() {
               광고 원본 비디오를 분석 서버로 안전하게 전송하는 컨트롤러
               구역입니다.
             </p>
+          </div>
+        ) : (
+          <div className="card">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>인플루언서 정보</th>
+                  <th>제출 상태</th>
+                  <th>검수 상태</th>
+                  <th>영상 파일 업로드</th>
+                </tr>
+              </thead>
+              <tbody>
+                {influencers.map((inf) => (
+                  <tr key={inf.id}>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{inf.name}</div>
+                      <div style={{ fontSize: "11px", color: "var(--mute)" }}>
+                        {inf.handle}
+                      </div>
+                    </td>
+                    <td>{inf.status}</td>
+                    <td>
+                      <span
+                        className={`st ${inf.result === "통과" ? "pass" : inf.result === "-" ? "none" : "block"}`}
+                      >
+                        {inf.result}
+                      </span>
+                    </td>
+                    <td>
+                      <input
+                        type="file"
+                        accept="video/*"
+                        onChange={(e) =>
+                          handleVideoUpload(inf.id, e.target.files[0])
+                        }
+                        style={{ fontSize: "12px" }}
+                      />
+                      {inf.videoName && (
+                        <div
+                          style={{
+                            fontSize: "11px",
+                            color: "var(--mute)",
+                            marginTop: "4px",
+                          }}
+                        >
+                          📎 {inf.videoName}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
 
