@@ -63,6 +63,7 @@ function App() {
     local.selectedCampaignId,
   );
   const [selectedInf, setSelectedInf] = useState(null);
+  const [feedbackMode, setFeedbackMode] = useState("edit");
   const [feedbackText, setFeedbackText] = useState("");
 
   const selectedCampaign =
@@ -634,6 +635,7 @@ function App() {
                         <button
                           className="btn sm"
                           onClick={() => {
+                            setFeedbackMode("edit");
                             setSelectedInf(inf);
                             setFeedbackText(inf.feedback || "");
                           }}
@@ -688,6 +690,27 @@ function App() {
                     <td>
                       <span
                         className={`st ${inf.result === "통과" ? "pass" : inf.result === "-" ? "none" : "block"}`}
+                        role={inf.result === "반려" ? "button" : undefined}
+                        tabIndex={inf.result === "반려" ? 0 : undefined}
+                        title={inf.result === "반려" ? "반려 사유 보기" : undefined}
+                        style={
+                          inf.result === "반려"
+                            ? { cursor: "pointer" }
+                            : undefined
+                        }
+                        onClick={() => {
+                          if (inf.result !== "반려") return;
+                          setFeedbackMode("view");
+                          setSelectedInf(inf);
+                        }}
+                        onKeyDown={(e) => {
+                          if (inf.result !== "반려") return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setFeedbackMode("view");
+                            setSelectedInf(inf);
+                          }
+                        }}
                       >
                         {inf.result}
                       </span>
@@ -722,8 +745,12 @@ function App() {
         </>
         )}
 
-        {/* 피드백 모달창 */}
-        {selectedInf && (
+        {/* 피드백 / 반려사유 모달창 */}
+        {selectedInf && (() => {
+          const modalInf =
+            influencers.find((i) => i.id === selectedInf.id) || selectedInf;
+          const isView = feedbackMode === "view";
+          return (
           <div
             style={{
               position: "fixed",
@@ -737,10 +764,19 @@ function App() {
               justifyContent: "center",
               zIndex: 100,
             }}
+            onClick={() => setSelectedInf(null)}
           >
-            <div className="card" style={{ width: "400px", padding: "20px" }}>
-              <h3>{selectedInf.name} 피드백 작성</h3>
-              {selectedInf.review && !selectedInf.review.error && (
+            <div
+              className="card"
+              style={{ width: "400px", padding: "20px" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3>
+                {isView
+                  ? `${modalInf.name} 반려 사유`
+                  : `${modalInf.name} 피드백 작성`}
+              </h3>
+              {modalInf.review && !modalInf.review.error && (
                 <div
                   style={{
                     fontSize: "12px",
@@ -754,34 +790,49 @@ function App() {
                 >
                   <div>
                     브랜드 언급:{" "}
-                    {selectedInf.review.brandMentioned ? "✅" : "❌"}
+                    {modalInf.review.brandMentioned ? "✅" : "❌"}
                     {"  "}/ 제품명 언급:{" "}
-                    {selectedInf.review.productMentioned ? "✅" : "❌"}
+                    {modalInf.review.productMentioned ? "✅" : "❌"}
                   </div>
-                  {selectedInf.review.matchedUsps?.length > 0 && (
+                  {modalInf.review.matchedUsps?.length > 0 && (
                     <div>
-                      ✅ 충족 USP: {selectedInf.review.matchedUsps.join(", ")}
+                      ✅ 충족 USP: {modalInf.review.matchedUsps.join(", ")}
                     </div>
                   )}
-                  {selectedInf.review.missingUsps?.length > 0 && (
+                  {modalInf.review.missingUsps?.length > 0 && (
                     <div style={{ color: "var(--block)" }}>
-                      ⚠️ 누락 USP: {selectedInf.review.missingUsps.join(", ")}
+                      ⚠️ 누락 USP: {modalInf.review.missingUsps.join(", ")}
                     </div>
                   )}
-                  {selectedInf.review.violatedBans?.length > 0 && (
+                  {modalInf.review.violatedBans?.length > 0 && (
                     <div style={{ color: "var(--block)" }}>
                       🚫 위반 금칙어:{" "}
-                      {selectedInf.review.violatedBans.join(", ")}
+                      {modalInf.review.violatedBans.join(", ")}
                     </div>
                   )}
                 </div>
               )}
-              <textarea
-                className="in"
-                style={{ height: "80px", marginBottom: "12px" }}
-                value={feedbackText}
-                onChange={(e) => setFeedbackText(e.target.value)}
-              />
+              {isView ? (
+                <div
+                  className="in"
+                  style={{
+                    minHeight: "80px",
+                    marginBottom: "12px",
+                    whiteSpace: "pre-wrap",
+                    lineHeight: 1.6,
+                    background: "#FBFCFA",
+                  }}
+                >
+                  {modalInf.feedback || "등록된 반려 사유가 없습니다."}
+                </div>
+              ) : (
+                <textarea
+                  className="in"
+                  style={{ height: "80px", marginBottom: "12px" }}
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                />
+              )}
               <div
                 style={{
                   display: "flex",
@@ -796,29 +847,32 @@ function App() {
                 >
                   닫기
                 </button>
-                <button
-                  className="btn stamp"
-                  onClick={() => {
-                    setInfluencers((prev) =>
-                      prev.map((i) =>
-                        i.id === selectedInf.id
-                          ? {
-                              ...i,
-                              feedback: feedbackText,
-                              status: "피드백완료",
-                            }
-                          : i,
-                      ),
-                    );
-                    setSelectedInf(null);
-                  }}
-                >
-                  저장
-                </button>
+                {!isView && (
+                  <button
+                    className="btn stamp"
+                    onClick={() => {
+                      setInfluencers((prev) =>
+                        prev.map((i) =>
+                          i.id === modalInf.id
+                            ? {
+                                ...i,
+                                feedback: feedbackText,
+                                status: "피드백완료",
+                              }
+                            : i,
+                        ),
+                      );
+                      setSelectedInf(null);
+                    }}
+                  >
+                    저장
+                  </button>
+                )}
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
           </>
         )}
       </div>
