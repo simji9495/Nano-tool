@@ -21,6 +21,10 @@ export default function CampaignSettings({ campaign, setCampaign }) {
                         let newUsps = [...campaign.usps]; newUsps[i] = e.target.value; setCampaign({ ...campaign, usps: newUsps });
                     }} />
                 ))}
+                <button type="button" onClick={() => setCampaign({ ...campaign, usps: [...campaign.usps, ''] })}
+                    style={{ background: '#FFF', border: '1px solid var(--stamp)', color: 'var(--stamp)', borderRadius: '4px', padding: '5px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
+                    + USP 추가
+                </button>
             </div>
             <div style={{ marginTop: '15px' }}>
                 <label className="lab">브랜드 금기사항 및 금칙어 목록</label>
@@ -29,6 +33,10 @@ export default function CampaignSettings({ campaign, setCampaign }) {
                         let newBans = [...campaign.bans]; newBans[i] = e.target.value; setCampaign({ ...campaign, bans: newBans });
                     }} />
                 ))}
+                <button type="button" onClick={() => setCampaign({ ...campaign, bans: [...campaign.bans, ''] })}
+                    style={{ background: '#FFF', border: '1px solid var(--block)', color: 'var(--block)', borderRadius: '4px', padding: '5px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
+                    + 금칙어 추가
+                </button>
             </div>
             <button className="btn stamp" style={{ marginTop: '15px' }} onClick={() => alert('실시간 캠페인 가이드가 수정되었습니다.')}>가이드라인 저장</button>
         </div>

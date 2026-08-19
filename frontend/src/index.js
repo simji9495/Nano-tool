@@ -15,32 +15,7 @@ function App() {
     usps: ["48시간 보습 지속", "비건 인증 원료", "저자극 테스트 완료"],
     bans: ["타사 제품 언급", "효과 과장 광고", "화학 성분 강조"],
   });
-  const [influencers, setInfluencers] = useState([
-    {
-      id: 1,
-      name: "김나노",
-      handle: "@nano",
-      status: "검수완료",
-      result: "통과",
-      feedback: "준수 완료",
-    },
-    {
-      id: 2,
-      name: "이리뷰",
-      handle: "@lee",
-      status: "미제출",
-      result: "-",
-      feedback: "",
-    },
-    {
-      id: 3,
-      name: "최쇼츠",
-      handle: "@shorts",
-      status: "검수완료",
-      result: "반려",
-      feedback: "금칙어 포함",
-    },
-  ]);
+  const [influencers, setInfluencers] = useState([]);
   const [selectedInf, setSelectedInf] = useState(null);
   const [feedbackText, setFeedbackText] = useState("");
 
@@ -58,12 +33,12 @@ function App() {
 
   // 📂 파일 업로드 및 데이터 변환 처리
   const handleFileUpload = (e) => {
-    const file = e.target.files;
+    const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (evt) => {
       const workbook = XLSX.read(evt.target.result, { type: "binary" });
-      const sheet = workbook.Sheets[workbook.SheetNames];
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rawData = XLSX.utils.sheet_to_json(sheet);
       const formatted = rawData.map((item, idx) => ({
         id: Date.now() + idx,
@@ -76,8 +51,8 @@ function App() {
         status: "미제출",
         result: "-",
       }));
-      setInfluencers((prev) => [...prev, ...formatted]);
-      alert(`🎉 ${formatted.length}명의 인플루언서가 실시간 로드되었습니다.`);
+      setInfluencers(formatted);
+      alert(`🎉 명단이 ${formatted.length}명으로 갱신되었습니다.`);
     };
     reader.readAsBinaryString(file);
   };
@@ -554,7 +529,8 @@ function App() {
                   }}
                 >
                   <div>
-                    브랜드 언급: {selectedInf.review.brandMentioned ? "✅" : "❌"}
+                    브랜드 언급:{" "}
+                    {selectedInf.review.brandMentioned ? "✅" : "❌"}
                     {"  "}/ 제품명 언급:{" "}
                     {selectedInf.review.productMentioned ? "✅" : "❌"}
                   </div>
