@@ -13,6 +13,7 @@ import express from "express";
 import multer from "multer";
 import cors from "cors";
 import dotenv from "dotenv";
+import { createClient } from "@supabase/supabase-js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
@@ -32,7 +33,22 @@ const CRV_BIN = process.env.CRV_BIN || "crv";
 const MAX_UPLOAD_MB = 500;
 const CHUNK_LIMIT = 24 * 1024 * 1024; // OpenAI 업로드 한도 25MB보다 살짝 아래
 
+const supabase =
+  process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY)
+    : null;
+
+const requireSupabase = (_req, res, next) => {
+  if (!supabase) {
+    return res.status(503).json({
+      error: "Supabase가 설정되지 않았습니다. SUPABASE_URL / SUPABASE_SERVICE_KEY를 확인해주세요.",
+    });
+  }
+  next();
+};
+
 app.use(cors({ origin: process.env.ALLOW_ORIGIN || "*" }));
+app.use(express.json());
 const upload = multer({
   dest: path.join(os.tmpdir(), "reelcheck-up"),
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
@@ -301,8 +317,118 @@ app.get("/api/health", async (_req, res) => {
     ffprobe: await check("ffprobe", ["-version"]),
     crv: await check(CRV_BIN, ["--help"]),
     openaiKey: Boolean(process.env.OPENAI_API_KEY),
+    supabase: Boolean(supabase),
     sttModel: STT_MODEL,
   });
+});
+
+/* ───────────── 캠페인 / 인플루언서 (Supabase) ───────────── */
+
+app.get("/api/campaigns", requireSupabase, async (_req, res) => {
+  const { data, error } = await supabase
+    .from("reelcheck_campaigns")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.post("/api/campaigns", requireSupabase, async (req, res) => {
+  const { advertiser, name, startDate, endDate, manager, brand, product, usps, bans } = req.body || {};
+  if (!advertiser || !name) {
+    return res.status(400).json({ error: "광고주명과 캠페인명은 필수입니다." });
+  }
+  const { data, error } = await supabase
+    .from("reelcheck_campaigns")
+    .insert({
+      advertiser,
+      name,
+      start_date: startDate || null,
+      end_date: endDate || null,
+      manager: manager || null,
+      brand: brand || "",
+      product: product || "",
+      usps: Array.isArray(usps) ? usps : [],
+      bans: Array.isArray(bans) ? bans : [],
+    })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.put("/api/campaigns/:id", requireSupabase, async (req, res) => {
+  const { advertiser, name, startDate, endDate, manager, brand, product, usps, bans } = req.body || {};
+  const patch = {};
+  if (advertiser !== undefined) patch.advertiser = advertiser;
+  if (name !== undefined) patch.name = name;
+  if (startDate !== undefined) patch.start_date = startDate || null;
+  if (endDate !== undefined) patch.end_date = endDate || null;
+  if (manager !== undefined) patch.manager = manager;
+  if (brand !== undefined) patch.brand = brand;
+  if (product !== undefined) patch.product = product;
+  if (usps !== undefined) patch.usps = usps;
+  if (bans !== undefined) patch.bans = bans;
+
+  const { data, error } = await supabase
+    .from("reelcheck_campaigns")
+    .update(patch)
+    .eq("id", req.params.id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.get("/api/campaigns/:id/influencers", requireSupabase, async (req, res) => {
+  const { data, error } = await supabase
+    .from("reelcheck_influencers")
+    .select("*")
+    .eq("campaign_id", req.params.id)
+    .order("created_at", { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+/* 엑셀 대량 업로드 → 해당 캠페인의 기존 명단을 통째로 교체 */
+app.post("/api/campaigns/:id/influencers/bulk", requireSupabase, async (req, res) => {
+  const campaignId = req.params.id;
+  const list = Array.isArray(req.body?.influencers) ? req.body.influencers : [];
+
+  const del = await supabase.from("reelcheck_influencers").delete().eq("campaign_id", campaignId);
+  if (del.error) return res.status(500).json({ error: del.error.message });
+  if (!list.length) return res.json([]);
+
+  const rows = list.map((inf) => ({
+    campaign_id: campaignId,
+    name: inf.name,
+    handle: inf.handle,
+    status: "미제출",
+    result: "-",
+  }));
+  const { data, error } = await supabase.from("reelcheck_influencers").insert(rows).select();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
+  const { status, result, feedback, videoName, transcript, review } = req.body || {};
+  const patch = {};
+  if (status !== undefined) patch.status = status;
+  if (result !== undefined) patch.result = result;
+  if (feedback !== undefined) patch.feedback = feedback;
+  if (videoName !== undefined) patch.video_name = videoName;
+  if (transcript !== undefined) patch.transcript = transcript;
+  if (review !== undefined) patch.review = review;
+
+  const { data, error } = await supabase
+    .from("reelcheck_influencers")
+    .update(patch)
+    .eq("id", req.params.id)
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
 app.post("/api/transcribe", upload.single("video"), async (req, res) => {
