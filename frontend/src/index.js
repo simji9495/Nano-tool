@@ -4,6 +4,8 @@ import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import CampaignSettings from "./CampaignSettings";
 
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8787";
+
 function App() {
   const [role, setRole] = useState("marketer");
   const [guideOpen, setGuideOpen] = useState(false);
@@ -92,17 +94,74 @@ function App() {
       ? Math.round((passCount / (passCount + failCount || 1)) * 100)
       : 0;
 
-  // 🎬 인플루언서별 영상 파일 업로드 처리
-  const handleVideoUpload = (id, file) => {
+  // 🎬 인플루언서별 영상 파일 업로드 → 백엔드 STT + 가이드라인 검수 요청
+  const handleVideoUpload = async (id, file) => {
     if (!file) return;
     setInfluencers((prev) =>
       prev.map((inf) =>
         inf.id === id
-          ? { ...inf, status: "제출완료", videoName: file.name }
+          ? { ...inf, status: "검수 중...", videoName: file.name }
           : inf,
       ),
     );
-    alert(`🎬 ${file.name} 파일이 업로드되었습니다.`);
+
+    const form = new FormData();
+    form.append("video", file);
+    form.append("campaign", JSON.stringify(campaign));
+
+    try {
+      const res = await fetch(`${API_BASE}/api/transcribe`, {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "검수 요청이 실패했습니다.");
+
+      const review = data.review;
+      setInfluencers((prev) =>
+        prev.map((inf) => {
+          if (inf.id !== id) return inf;
+          if (review?.error) {
+            return {
+              ...inf,
+              status: "검수실패",
+              result: "-",
+              feedback: `가이드라인 검수 실패: ${review.error}`,
+            };
+          }
+          if (!review) {
+            return {
+              ...inf,
+              status: "전사완료",
+              result: "-",
+              feedback: "가이드라인이 없어 판정을 건너뛰었습니다.",
+            };
+          }
+          return {
+            ...inf,
+            status: "검수완료",
+            result: review.result,
+            feedback: review.feedback,
+            transcript: data.text,
+            review,
+          };
+        }),
+      );
+    } catch (err) {
+      setInfluencers((prev) =>
+        prev.map((inf) =>
+          inf.id === id
+            ? {
+                ...inf,
+                status: "검수실패",
+                result: "-",
+                feedback: `오류: ${err.message}`,
+              }
+            : inf,
+        ),
+      );
+      alert(`❌ 검수 요청 실패: ${err.message}`);
+    }
   };
 
   return (
@@ -482,6 +541,41 @@ function App() {
           >
             <div className="card" style={{ width: "400px", padding: "20px" }}>
               <h3>{selectedInf.name} 피드백 작성</h3>
+              {selectedInf.review && !selectedInf.review.error && (
+                <div
+                  style={{
+                    fontSize: "12px",
+                    background: "#F7F9F5",
+                    border: "1px solid var(--line)",
+                    borderRadius: "4px",
+                    padding: "10px",
+                    marginBottom: "12px",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  <div>
+                    브랜드 언급: {selectedInf.review.brandMentioned ? "✅" : "❌"}
+                    {"  "}/ 제품명 언급:{" "}
+                    {selectedInf.review.productMentioned ? "✅" : "❌"}
+                  </div>
+                  {selectedInf.review.matchedUsps?.length > 0 && (
+                    <div>
+                      ✅ 충족 USP: {selectedInf.review.matchedUsps.join(", ")}
+                    </div>
+                  )}
+                  {selectedInf.review.missingUsps?.length > 0 && (
+                    <div style={{ color: "var(--block)" }}>
+                      ⚠️ 누락 USP: {selectedInf.review.missingUsps.join(", ")}
+                    </div>
+                  )}
+                  {selectedInf.review.violatedBans?.length > 0 && (
+                    <div style={{ color: "var(--block)" }}>
+                      🚫 위반 금칙어:{" "}
+                      {selectedInf.review.violatedBans.join(", ")}
+                    </div>
+                  )}
+                </div>
+              )}
               <textarea
                 className="in"
                 style={{ height: "80px", marginBottom: "12px" }}

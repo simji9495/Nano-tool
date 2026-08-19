@@ -216,6 +216,67 @@ async function keyframes(videoPath, opts = {}) {
   }
 }
 
+/* ───────────── 1.5 가이드라인 준수 검수 ───────────── */
+
+async function reviewAgainstGuidelines(text, campaign) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
+
+  const model = process.env.REVIEW_MODEL || "gpt-4o-mini";
+  const guideline = {
+    brand: campaign?.brand || "",
+    product: campaign?.product || "",
+    usps: Array.isArray(campaign?.usps) ? campaign.usps.filter(Boolean) : [],
+    bans: Array.isArray(campaign?.bans) ? campaign.bans.filter(Boolean) : [],
+  };
+
+  const prompt = `다음은 인플루언서 광고 영상에서 추출한 발화 텍스트다. 아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라.
+
+[캠페인 가이드라인]
+- 정확한 브랜드명: ${guideline.brand || "(미지정)"}
+- 정확한 제품명: ${guideline.product || "(미지정)"}
+- 필수 포함 USP: ${guideline.usps.join(", ") || "(없음)"}
+- 금칙어/금기사항: ${guideline.bans.join(", ") || "(없음)"}
+
+[발화 텍스트]
+"""${text}"""
+
+아래 JSON 형식으로만 답하라:
+{"result":"통과"|"반려","brandMentioned":boolean,"productMentioned":boolean,"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장"}`;
+
+  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: "너는 인플루언서 광고 콘텐츠 가이드라인 준수 여부를 검수하는 꼼꼼한 검수자다. 반드시 JSON만 출력한다." },
+        { role: "user", content: prompt },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0,
+    }),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(`가이드라인 검수 실패 (${r.status}) ${detail.slice(0, 300)}`);
+  }
+  const d = await r.json();
+  let parsed;
+  try { parsed = JSON.parse(d.choices?.[0]?.message?.content || "{}"); }
+  catch { throw new Error("검수 결과 파싱 실패"); }
+
+  return {
+    result: parsed.result === "통과" ? "통과" : "반려",
+    brandMentioned: Boolean(parsed.brandMentioned),
+    productMentioned: Boolean(parsed.productMentioned),
+    matchedUsps: Array.isArray(parsed.matchedUsps) ? parsed.matchedUsps : [],
+    missingUsps: Array.isArray(parsed.missingUsps) ? parsed.missingUsps : [],
+    violatedBans: Array.isArray(parsed.violatedBans) ? parsed.violatedBans : [],
+    feedback: String(parsed.feedback || ""),
+  };
+}
+
 /* ───────────── 라우트 ───────────── */
 
 const fail = (res, e) => {
@@ -244,7 +305,16 @@ app.get("/api/health", async (_req, res) => {
 app.post("/api/transcribe", upload.single("video"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "video 필드에 파일을 담아 보내주세요." });
   try {
-    res.json(await transcribe(req.file.path));
+    const result = await transcribe(req.file.path);
+    let review = null;
+    if (req.body?.campaign) {
+      try {
+        review = await reviewAgainstGuidelines(result.text, JSON.parse(req.body.campaign));
+      } catch (e) {
+        review = { error: String(e.message || e) };
+      }
+    }
+    res.json({ ...result, review });
   } catch (e) { fail(res, e); }
   finally { fs.rm(req.file.path, { force: true }).catch(() => {}); }
 });
