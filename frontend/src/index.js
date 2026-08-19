@@ -1,23 +1,182 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
-import Papa from "papaparse";
 import * as XLSX from "xlsx";
 import CampaignSettings from "./CampaignSettings";
+import CampaignCreate, { formatCampaignPeriod } from "./CampaignCreate";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8787";
+const STORAGE_KEY = "reelcheck_campaigns_v1";
+
+const defaultGuidelines = {
+  brand: "",
+  product: "",
+  usps: [""],
+  bans: [""],
+};
+
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { campaigns: [], selectedCampaignId: null };
+    const parsed = JSON.parse(raw);
+    return {
+      campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns : [],
+      selectedCampaignId: parsed.selectedCampaignId || null,
+    };
+  } catch {
+    return { campaigns: [], selectedCampaignId: null };
+  }
+}
+
+function parseYearMonth(dateStr) {
+  const m = String(dateStr || "").match(/^(\d{4})-(\d{2})/);
+  if (!m) return { year: "", month: "" };
+  return { year: Number(m[1]), month: Number(m[2]) };
+}
+
+function mapApiCampaign(row, localInfluencers = []) {
+  const start = parseYearMonth(row.start_date);
+  const end = parseYearMonth(row.end_date);
+  return {
+    id: row.id,
+    advertiser: row.advertiser || "",
+    name: row.name || "",
+    startYear: start.year,
+    startMonth: start.month,
+    endMonth: end.month || start.month,
+    manager: row.manager || "",
+    brand: row.brand || "",
+    product: row.product || "",
+    usps: Array.isArray(row.usps) && row.usps.length ? row.usps : [""],
+    bans: Array.isArray(row.bans) && row.bans.length ? row.bans : [""],
+    influencers: localInfluencers,
+  };
+}
 
 function App() {
+  const local = loadLocal();
   const [role, setRole] = useState("marketer");
+  const [tab, setTab] = useState("campaign");
   const [guideOpen, setGuideOpen] = useState(false);
-  const [campaign, setCampaign] = useState({
-    brand: "나노뷰티",
-    product: "워터 에센스",
-    usps: ["48시간 보습 지속", "비건 인증 원료", "저자극 테스트 완료"],
-    bans: ["타사 제품 언급", "효과 과장 광고", "화학 성분 강조"],
-  });
-  const [influencers, setInfluencers] = useState([]);
+  const [campaigns, setCampaigns] = useState(local.campaigns);
+  const [selectedCampaignId, setSelectedCampaignId] = useState(
+    local.selectedCampaignId,
+  );
   const [selectedInf, setSelectedInf] = useState(null);
   const [feedbackText, setFeedbackText] = useState("");
+
+  const selectedCampaign =
+    campaigns.find((c) => c.id === selectedCampaignId) || null;
+  const influencers = selectedCampaign?.influencers || [];
+  const campaign = selectedCampaign
+    ? {
+        brand: selectedCampaign.brand || "",
+        product: selectedCampaign.product || "",
+        usps: selectedCampaign.usps?.length ? selectedCampaign.usps : [""],
+        bans: selectedCampaign.bans?.length ? selectedCampaign.bans : [""],
+      }
+    : defaultGuidelines;
+
+  useEffect(() => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ campaigns, selectedCampaignId }),
+    );
+  }, [campaigns, selectedCampaignId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/campaigns`);
+        if (!res.ok) return;
+        const rows = await res.json();
+        if (!Array.isArray(rows) || cancelled) return;
+        const localNow = loadLocal();
+        const mapped = rows.map((row) =>
+          mapApiCampaign(
+            row,
+            localNow.campaigns.find((c) => c.id === row.id)?.influencers || [],
+          ),
+        );
+        if (!mapped.length) return;
+        setCampaigns((prev) => {
+          const remoteIds = new Set(mapped.map((c) => c.id));
+          const localsOnly = prev.filter((c) => !remoteIds.has(c.id));
+          return [...mapped, ...localsOnly];
+        });
+      } catch {
+        /* 로컬 저장소만 사용 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const patchSelectedCampaign = (patch) => {
+    if (!selectedCampaignId) return;
+    setCampaigns((prev) =>
+      prev.map((c) => (c.id === selectedCampaignId ? { ...c, ...patch } : c)),
+    );
+  };
+
+  const setCampaign = (next) => {
+    const value = typeof next === "function" ? next(campaign) : next;
+    patchSelectedCampaign({
+      brand: value.brand,
+      product: value.product,
+      usps: value.usps,
+      bans: value.bans,
+    });
+  };
+
+  const setInfluencers = (updater) => {
+    if (!selectedCampaignId) return;
+    setCampaigns((prev) =>
+      prev.map((c) => {
+        if (c.id !== selectedCampaignId) return c;
+        const current = c.influencers || [];
+        const next = typeof updater === "function" ? updater(current) : updater;
+        return { ...c, influencers: next };
+      }),
+    );
+  };
+
+  const handleCreateCampaign = async (payload) => {
+    const localId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `c_${Date.now()}`;
+    let created = {
+      id: localId,
+      ...payload,
+      ...defaultGuidelines,
+      influencers: [],
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/api/campaigns`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const row = await res.json();
+        created = mapApiCampaign(row, []);
+      }
+    } catch {
+      /* 서버 없이도 로컬에서 캠페인 운영 */
+    }
+
+    setCampaigns((prev) => [created, ...prev]);
+    setSelectedCampaignId(created.id);
+  };
+
+  const handleSelectCampaign = (id) => {
+    setSelectedCampaignId(id);
+    setTab("dashboard");
+  };
 
   // 📥 마케터용 샘플 엑셀 파일 즉시 생성 및 다운로드
   const handleDownloadSample = () => {
@@ -31,10 +190,15 @@ function App() {
     XLSX.writeFile(wb, "reelcheck_sample.xlsx");
   };
 
-  // 📂 파일 업로드 및 데이터 변환 처리
+  // 📂 파일 업로드 및 데이터 변환 처리 (선택 중인 캠페인 명단만 갱신)
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
+    if (!selectedCampaignId) {
+      alert("먼저 캠페인을 생성하거나 선택한 뒤 명단을 업로드해주세요.");
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (evt) => {
       const workbook = XLSX.read(evt.target.result, { type: "binary" });
@@ -52,7 +216,14 @@ function App() {
         result: "-",
       }));
       setInfluencers(formatted);
-      alert(`🎉 명단이 ${formatted.length}명으로 갱신되었습니다.`);
+      fetch(`${API_BASE}/api/campaigns/${selectedCampaignId}/influencers/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ influencers: formatted }),
+      }).catch(() => {});
+      alert(
+        `🎉 [${selectedCampaign.name}] 명단이 ${formatted.length}명으로 갱신되었습니다.`,
+      );
     };
     reader.readAsBinaryString(file);
   };
@@ -72,6 +243,10 @@ function App() {
   // 🎬 인플루언서별 영상 파일 업로드 → 백엔드 STT + 가이드라인 검수 요청
   const handleVideoUpload = async (id, file) => {
     if (!file) return;
+    if (!selectedCampaignId) {
+      alert("캠페인을 선택한 뒤 영상을 업로드해주세요.");
+      return;
+    }
     setInfluencers((prev) =>
       prev.map((inf) =>
         inf.id === id
@@ -163,10 +338,57 @@ function App() {
       </div>
 
       <div className="wrap">
+        <div className="steps" style={{ marginTop: 0 }}>
+          <button
+            className={tab === "campaign" ? "active" : ""}
+            onClick={() => setTab("campaign")}
+          >
+            캠페인 생성
+          </button>
+          <button
+            className={tab === "dashboard" ? "active" : ""}
+            onClick={() => setTab("dashboard")}
+          >
+            검수 대시보드
+          </button>
+        </div>
+
+        {tab === "campaign" ? (
+          <CampaignCreate
+            campaigns={campaigns}
+            selectedCampaignId={selectedCampaignId}
+            onCreate={handleCreateCampaign}
+            onSelect={handleSelectCampaign}
+          />
+        ) : (
+          <>
         <h1 style={{ fontSize: "22px", margin: "10px 0" }}>
           콘텐츠 1차 자동 검수 대시보드
         </h1>
+        {selectedCampaign ? (
+          <p className="lede" style={{ marginTop: 0 }}>
+            현재 캠페인: <b>{selectedCampaign.advertiser}</b> ·{" "}
+            {selectedCampaign.name} · {formatCampaignPeriod(selectedCampaign)} ·
+            담당 {selectedCampaign.manager}
+          </p>
+        ) : (
+          <div className="card">
+            <p style={{ margin: 0, fontSize: 13.5 }}>
+              선택된 캠페인이 없습니다. 최상단 <b>캠페인 생성</b> 탭에서 캠페인을
+              만든 뒤, 해당 캠페인 명단만 독립적으로 운영됩니다.
+            </p>
+            <button
+              className="btn stamp"
+              style={{ marginTop: 12 }}
+              onClick={() => setTab("campaign")}
+            >
+              캠페인 생성하러 가기
+            </button>
+          </div>
+        )}
 
+        {selectedCampaign && (
+        <>
         {role === "marketer" ? (
           <div>
             {/* 가이드라인 입력 아코디언 (기본 접힘, 항상 접근 가능) */}
@@ -497,6 +719,8 @@ function App() {
             </table>
           </div>
         )}
+        </>
+        )}
 
         {/* 피드백 모달창 */}
         {selectedInf && (
@@ -594,6 +818,8 @@ function App() {
               </div>
             </div>
           </div>
+        )}
+          </>
         )}
       </div>
     </div>

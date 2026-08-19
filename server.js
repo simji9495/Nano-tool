@@ -333,18 +333,25 @@ app.get("/api/campaigns", requireSupabase, async (_req, res) => {
   res.json(data);
 });
 
+const monthDate = (year, month) => {
+  const y = Number(year);
+  const m = Number(month);
+  if (!y || !m || m < 1 || m > 12) return null;
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-01`;
+};
+
 app.post("/api/campaigns", requireSupabase, async (req, res) => {
-  const { advertiser, name, startDate, endDate, manager, brand, product, usps, bans } = req.body || {};
+  const { advertiser, name, startDate, endDate, startYear, startMonth, endMonth, manager, brand, product, usps, bans } = req.body || {};
   if (!advertiser || !name) {
-    return res.status(400).json({ error: "광고주명과 캠페인명은 필수입니다." });
+    return res.status(400).json({ error: "광고주명과 프로젝트명은 필수입니다." });
   }
   const { data, error } = await supabase
     .from("reelcheck_campaigns")
     .insert({
       advertiser,
       name,
-      start_date: startDate || null,
-      end_date: endDate || null,
+      start_date: startDate || monthDate(startYear, startMonth),
+      end_date: endDate || monthDate(startYear, endMonth),
       manager: manager || null,
       brand: brand || "",
       product: product || "",
