@@ -1,99 +1,50 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
-import CampaignSettings from './CampaignSettings';
-import MarketerDashboard from './MarketerDashboard';
-
-const API_BASE = "https://onrender.com";
 
 function App() {
     const [role, setRole] = useState("marketer");
-    const [step, setStep] = useState(1);
-    const [campaign, setCampaign] = useState({
-        brand: "나노뷰티", product: "워터 에센스", 
-        usps: ["48시간 보습 지속", "비건 인증 원료", "저자극 테스트 완료"],
-        bans: ["타사 제품 언급", "효과 과장 광고", "화학 성분 강조"]
-    });
-    const [influencers, setInfluencers] = useState([]);
-    const [loadingList, setLoadingList] = useState(false);
-    const [uploading, setUploading] = useState(false);
-    const [selectedInfluencerId, setSelectedInfluencerId] = useState("");
-    const [analysisLog, setAnalysisLog] = useState([]);
+    const [influencers, setInfluencers] = useState([
+        { id: 1, name: "김나노", handle: "@nano", status: "검수완료", result: "통과", feedback: "준수 완료" },
+        { id: 2, name: "이리뷰", handle: "@lee", status: "미제출", result: "-", feedback: "" }
+    ]);
     const [selectedInf, setSelectedInf] = useState(null);
     const [feedbackText, setFeedbackText] = useState("");
 
-    useEffect(() => { fetchInfluencerList(); }, []);
-
-    const fetchInfluencerList = async () => {
-        setLoadingList(true);
-        try {
-            const response = await fetch(`${API_BASE}/api/influencers/list`);
-            if (response.ok) {
-                const data = await response.json();
-                if (data && data.length > 0) setInfluencers(data);
-            }
-        } catch (error) {
-            setInfluencers([
-                { id: 1, name: "김나노", handle: "@nano_review", status: "검수완료", result: "통과", audioText: "제품 순해요.", ocrText: "[자막] 보습 에센스", feedback: "준수 완료" },
-                { id: 2, name: "이리뷰", handle: "@lee_vlog", status: "미제출", result: "-", audioText: "", ocrText: "", feedback: "" }
-            ]);
-        } finally { setLoadingList(false); }
+    // 📥 [100% 보장] 마케터용 샘플 엑셀 파일 즉시 생성 및 다운로드
+    const handleDownloadSample = () => {
+        const data = [{ "이름": "홍길동", "핸들": "@hong_vlog" }, { "이름": "박리뷰", "핸들": "@park_vlog" }];
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "양식");
+        XLSX.writeFile(wb, "reelcheck_sample.xlsx");
     };
 
+    // 📂 파일 업로드 및 데이터 변환 처리
     const handleFileUpload = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        const ext = file.name.split('.').pop().toLowerCase();
-        if (ext === 'csv') {
-            Papa.parse(file, { header: true, skipEmptyLines: true, complete: (res) => sendDataToSupabase(res.data) });
-        } else {
-            const reader = new FileReader();
-            reader.onload = (evt) => {
-                const workbook = XLSX.read(evt.target.result, { type: 'binary' });
-                sendDataToSupabase(XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]));
-            };
-            reader.readAsBinaryString(file);
-        }
-    };
-
-    const sendDataToSupabase = async (rawData) => {
-        const formatted = rawData.map((item, idx) => ({
-            id: Date.now() + idx,
-            name: (item['이름'] || item['name'] || `인플루언서_${idx + 1}`).toString().trim(),
-            handle: (item['핸들'] || item['handle'] || "@unknown").toString().trim(),
-            status: "미제출", result: "-"
-        }));
-        try {
-            await fetch(`${API_BASE}/api/influencers`, {
-                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ list: formatted })
-            });
-            setInfluencers(prev => [...prev, ...formatted]);
-            alert(`🎉 Supabase DB에 총 ${formatted.length}명의 명단이 저장되었습니다!`);
-        } catch (error) {
-            setInfluencers(formatted);
-            alert(`[우회 모드] 화면 대시보드에 ${formatted.length}명이 로드되었습니다.`);
-        }
-    };
-
-    const handleVideoInspect = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        setUploading(true);
-        setAnalysisLog(["[1/3] 서버 전송 중...", "[2/3] Whisper AI 분석 중..."]);
-        try {
-            setInfluencers(prev => prev.map(inf => {
-                if (inf.id === Number(selectedInfluencerId || 2)) {
-                    return { ...inf, status: "검수완료", result: "반려", audioText: "화학 성분 제로네요.", ocrText: "[자막] 테스트 완료", feedback: "금기사항 [화학 성분] 위반" };
-                }
-                return inf;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            const workbook = XLSX.read(evt.target.result, { type: 'binary' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rawData = XLSX.utils.sheet_to_json(sheet);
+            const formatted = rawData.map((item, idx) => ({
+                id: Date.now() + idx,
+                name: (item['이름'] || item['name'] || `인플루언서_${idx + 1}`).toString().trim(),
+                handle: (item['핸들'] || item['handle'] || "@unknown").toString().trim(),
+                status: "미제출", result: "-"
             }));
-            setAnalysisLog(prev => [...prev, "[3/3] Claude 검수 완료!"]);
-        } finally { setUploading(false); }
+            setInfluencers(prev => [...prev, ...formatted]);
+            alert(`🎉 ${formatted.length}명의 인플루언서가 임시 로드되었습니다.`);
+        };
+        reader.readAsBinaryString(file);
     };
 
     return (
         <div>
+            {/* 상단 바 */}
             <div className="bar">
                 <div className="brand">REEL<em>CHECK</em></div>
                 <div className="roles">
@@ -101,34 +52,66 @@ function App() {
                     <button className={role === "influencer" ? "active" : ""} onClick={() => setRole("influencer")}>인플루언서 업로드</button>
                 </div>
             </div>
+
             <div className="wrap">
+                <h1 style={{ fontSize: "22px", margin: "10px 0" }}>콘텐츠 1차 자동 검수 대시보드</h1>
+                
                 {role === "marketer" ? (
                     <div>
-                        <div className="steps">
-                            <button className={step === 1 ? "active" : ""} onClick={() => setStep(1)}>1. 가이드라인 세팅</button>
-                            <button className={step === 2 ? "active" : ""} onClick={() => setStep(2)}>2. 명단 등록 및 현황</button>
+                        {/* 📊 샘플 다운로드 버튼이 포함된 대량 등록 섹션 */}
+                        <div className="card" style={{ backgroundColor: "#F7F9F5", border: "2px dashed var(--stamp)", padding: "20px", marginBottom: "20px" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                                <h3 style={{ margin: 0, color: "var(--stamp)", fontSize: "14px" }}>📊 명단 대량 등록 매니저</h3>
+                                <button onClick={handleDownloadSample} style={{ background: "#FFF", border: "1px solid var(--stamp)", color: "var(--stamp)", borderRadius: "4px", padding: "5px 10px", fontSize: "11px", fontWeight: "600", cursor: "pointer" }}>
+                                    📥 양식 엑셀 다운로드
+                                </button>
+                            </div>
+                            <div style={{ background: "#FFF", padding: "8px", border: "1px solid var(--line)", borderRadius: "4px", display: "inline-block" }}>
+                                <input type="file" accept=".csv, .xlsx, .xls" onChange={handleFileUpload} style={{ fontSize: "13px", cursor: "pointer" }} />
+                            </div>
                         </div>
-                        {step === 1 ? <CampaignSettings campaign={campaign} setCampaign={setCampaign} /> : 
-                        <MarketerDashboard loadingList={loadingList} influencers={influencers} handleFileUpload={handleFileUpload} setSelectedInf={setSelectedInf} setFeedbackText={setFeedbackText} />}
+
+                        {/* 라이브 테이블 현황판 */}
+                        <div className="card">
+                            <table className="tbl">
+                                <thead>
+                                    <tr><th>인플루언서 정보</th><th>제출 상태</th><th>AI 판정</th><th>작업</th></tr>
+                                </thead>
+                                <tbody>
+                                    {influencers.map(inf => (
+                                        <tr key={inf.id}>
+                                            <td>
+                                                <div style={{ fontWeight: 600 }}>{inf.name}</div>
+                                                <div style={{ fontSize: '11px', color: 'var(--mute)' }}>{inf.handle}</div>
+                                            </td>
+                                            <td>{inf.status}</td>
+                                            <td><span className={`st ${inf.result === '통과' ? 'pass' : inf.result === '-' ? 'none' : 'block'}`}>{inf.result}</span></td>
+                                            <td><button className="btn sm" onClick={() => { setSelectedInf(inf); setFeedbackText(inf.feedback || ""); }}>상세 피드백</button></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 ) : (
-                    <div className="card">
-                        <div className="card-hd"><h2>인플루언서 비디오 제출</h2></div>
-                        <select className="in" onChange={(e)=>setSelectedInfluencerId(e.target.value)}>
-                            <option value="">-- 이름을 골라주세요 --</option>
-                            {influencers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                        </select>
-                        <input type="file" onChange={handleVideoInspect} disabled={uploading} style={{marginTop:"20px"}} />
-                        {uploading && analysisLog.map((log, i) => <div key={i}>{log}</div>)}
+                    <div className="card" style={{ padding: "30px", textAlign: "center" }}>
+                        <h3>📹 인플루언서 영상 제출 레이어</h3>
                     </div>
                 )}
+
+                {/* 피드백 모달창 */}
                 {selectedInf && (
-                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-                        <div className="card" style={{ width: '500px', padding: '24px' }}>
-                            <h2>{selectedInf.name} 피드백 보고서</h2>
-                            <textarea className="in" style={{ height: '100px' }} value={feedbackText} onChange={(e)=>setFeedbackText(e.target.value)} />
-                            <button className="btn stamp" onClick={()=>{ alert('피드백 저장 완료'); setSelectedInf(null); }}>저장</button>
-                            <button className="btn" onClick={()=>setSelectedInf(null)}>닫기</button>
+                    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+                        <div className="card" style={{ width: '400px', padding: '20px' }}>
+                            <h3>{selectedInf.name} 피드백 작성</h3>
+                            <textarea className="in" style={{ height: '80px', marginBottom: "12px" }} value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} />
+                            <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                                <button className="btn" style={{ backgroundColor: "#858E88" }} onClick={() => setSelectedInf(null)}>닫기</button>
+                                <button className="btn stamp" onClick={() => {
+                                    setInfluencers(prev => prev.map(i => i.id === selectedInf.id ? { ...i, feedback: feedbackText, status: "피드백완료" } : i));
+                                    setSelectedInf(null);
+                                }}>저장</button>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -136,5 +119,6 @@ function App() {
         </div>
     );
 }
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
