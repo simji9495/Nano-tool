@@ -14,6 +14,7 @@ import multer from "multer";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
@@ -22,6 +23,11 @@ import os from "node:os";
 import crypto from "node:crypto";
 
 dotenv.config();
+
+// 사내망처럼 프록시를 거쳐야 외부 인터넷(Supabase/OpenAI)에 나갈 수 있는 환경 대응.
+// HTTPS_PROXY가 없으면 (예: 클라우드 배포 환경) 아무 영향 없이 그대로 직접 연결한다.
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+if (proxyUrl) setGlobalDispatcher(new ProxyAgent(proxyUrl));
 
 const run = promisify(execFile);
 const app = express();

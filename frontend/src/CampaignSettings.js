@@ -17,9 +17,15 @@ export default function CampaignSettings({ campaign, setCampaign }) {
             <div style={{ marginTop: '20px' }}>
                 <label className="lab">필수 포함 핵심 USP 명단</label>
                 {campaign.usps.map((usp, i) => (
-                    <input key={i} className="in" style={{ marginBottom: '5px' }} value={usp} onChange={(e) => {
-                        let newUsps = [...campaign.usps]; newUsps[i] = e.target.value; setCampaign({ ...campaign, usps: newUsps });
-                    }} />
+                    <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
+                        <input className="in" value={usp} onChange={(e) => {
+                            let newUsps = [...campaign.usps]; newUsps[i] = e.target.value; setCampaign({ ...campaign, usps: newUsps });
+                        }} />
+                        <button type="button" onClick={() => setCampaign({ ...campaign, usps: campaign.usps.filter((_, idx) => idx !== i) })}
+                            style={{ background: '#FFF', border: '1px solid var(--line)', color: 'var(--graphite)', borderRadius: '4px', width: '32px', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>
+                            −
+                        </button>
+                    </div>
                 ))}
                 <button type="button" onClick={() => setCampaign({ ...campaign, usps: [...campaign.usps, ''] })}
                     style={{ background: '#FFF', border: '1px solid var(--stamp)', color: 'var(--stamp)', borderRadius: '4px', padding: '5px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
@@ -29,9 +35,15 @@ export default function CampaignSettings({ campaign, setCampaign }) {
             <div style={{ marginTop: '15px' }}>
                 <label className="lab">브랜드 금기사항 및 금칙어 목록</label>
                 {campaign.bans.map((ban, i) => (
-                    <input key={i} className="in" style={{ marginBottom: '5px', borderColor: 'var(--block)' }} value={ban} onChange={(e) => {
-                        let newBans = [...campaign.bans]; newBans[i] = e.target.value; setCampaign({ ...campaign, bans: newBans });
-                    }} />
+                    <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
+                        <input className="in" style={{ borderColor: 'var(--block)' }} value={ban} onChange={(e) => {
+                            let newBans = [...campaign.bans]; newBans[i] = e.target.value; setCampaign({ ...campaign, bans: newBans });
+                        }} />
+                        <button type="button" onClick={() => setCampaign({ ...campaign, bans: campaign.bans.filter((_, idx) => idx !== i) })}
+                            style={{ background: '#FFF', border: '1px solid var(--line)', color: 'var(--graphite)', borderRadius: '4px', width: '32px', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>
+                            −
+                        </button>
+                    </div>
                 ))}
                 <button type="button" onClick={() => setCampaign({ ...campaign, bans: [...campaign.bans, ''] })}
                     style={{ background: '#FFF', border: '1px solid var(--block)', color: 'var(--block)', borderRadius: '4px', padding: '5px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
