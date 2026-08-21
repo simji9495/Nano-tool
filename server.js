@@ -14,6 +14,7 @@ import multer from "multer";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { createWorker } from "tesseract.js";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -302,7 +303,7 @@ async function reviewAgainstGuidelines(text, campaign) {
   };
 }
 
-/* ───────────── 3. 화면 자막 OCR (GPT-4o 비전) ───────────── */
+/* ───────────── 3. 화면 자막 OCR: Tesseract 1차 필터 + GPT-4o 정밀검증 ───────────── */
 
 async function mapWithConcurrency(items, limit, fn) {
   const results = new Array(items.length);
@@ -317,14 +318,77 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-async function ocrFrames(frames) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
-  if (!frames.length) return "";
+/* Tesseract worker는 초기화가 무거워서 프로세스당 하나만 만들어 재사용한다. */
+let tesseractWorkerPromise = null;
+function getTesseractWorker() {
+  if (!tesseractWorkerPromise) tesseractWorkerPromise = createWorker("kor+eng");
+  return tesseractWorkerPromise;
+}
 
-  const model = process.env.OCR_MODEL || "gpt-4o-mini";
-  const perFrame = await mapWithConcurrency(frames, 8, async (f) => {
+/* 프레임마다 Tesseract로 텍스트만 빠르게 뽑는다. 실패한 프레임은 빈 텍스트로 넘어간다. */
+async function ocrFramesTesseract(frames) {
+  if (!frames.length) return [];
+  const worker = await getTesseractWorker();
+  const results = [];
+  for (const f of frames) {
     try {
+      const { data } = await worker.recognize(f.dataUrl);
+      results.push({ t: f.t, text: (data.text || "").trim(), confidence: data.confidence ?? 0 });
+    } catch {
+      results.push({ t: f.t, text: "", confidence: 0 });
+    }
+  }
+  return results;
+}
+
+function levenshtein(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+/* 오탈자/우회 표기(예: "화 학 성 분")까지 잡기 위한 편집거리 기반 유사 포함 검사 */
+function fuzzyContains(text, phrase, maxRatio = 0.3) {
+  if (!text || !phrase) return false;
+  if (text.includes(phrase)) return true;
+  const maxDist = Math.max(1, Math.floor(phrase.length * maxRatio));
+  for (let i = 0; i <= Math.max(0, text.length - phrase.length + maxDist); i++) {
+    const window = text.slice(i, i + phrase.length + maxDist);
+    if (window.length >= phrase.length - maxDist && levenshtein(window, phrase) <= maxDist) return true;
+  }
+  return false;
+}
+
+/* 1차 필터: 금칙어 의심 단어가 걸렸거나, Tesseract 신뢰도가 낮아 오인식이 의심되는 프레임만 골라낸다. */
+function findSuspiciousFrames(zipped, bans) {
+  const cleanBans = (bans || []).filter(Boolean);
+  return zipped.filter((r) => {
+    if (!r.text) return false;
+    if (r.confidence < 60) return true; // 글자는 있는데 잘 못 읽었을 가능성
+    return cleanBans.some((b) => fuzzyContains(r.text, b));
+  });
+}
+
+/* 2차 정밀검증: 의심 프레임만 GPT-4o 비전으로 보내 오탈자/오인식인지 실제 위반인지 판정한다. */
+async function verifySuspiciousVision(frames, bans) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key || !frames.length) return [];
+  const model = process.env.OCR_MODEL || "gpt-4o-mini";
+  const banList = (bans || []).filter(Boolean).join(", ") || "(지정된 금칙어 없음)";
+
+  return mapWithConcurrency(frames, 5, async (f) => {
+    try {
+      const prompt = `이 이미지의 자막에서 다음 금칙어 목록 위반 소지가 있는지 검수해라: ${banList}.
+로컬 OCR(Tesseract)이 이 프레임에서 "${f.text}"라고 읽었다. 이게 실제로 금칙어를 포함한 문맥인지, 아니면 OCR의 오인식/오탈자인지 이미지를 직접 보고 판단해라.
+아래 JSON 형식으로만 답하라: {"correctedText":"이미지에서 실제로 보이는 정확한 텍스트","violates":boolean,"matchedBan":"위반한 금칙어 또는 null"}`;
       const r = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -334,34 +398,47 @@ async function ocrFrames(frames) {
             {
               role: "user",
               content: [
-                {
-                  type: "text",
-                  text: "이 이미지에 보이는 자막이나 화면에 찍힌 텍스트를 그대로 읽어서 반환해라. 텍스트가 없으면 빈 문자열만 반환해라. 설명하지 말고 텍스트만 반환해라.",
-                },
+                { type: "text", text: prompt },
                 { type: "image_url", image_url: { url: f.dataUrl } },
               ],
             },
           ],
+          response_format: { type: "json_object" },
           temperature: 0,
         }),
       });
-      if (!r.ok) return "";
+      if (!r.ok) return { t: f.t, correctedText: f.text, violates: false, matchedBan: null };
       const d = await r.json();
-      return (d.choices?.[0]?.message?.content || "").trim();
+      const parsed = JSON.parse(d.choices?.[0]?.message?.content || "{}");
+      return {
+        t: f.t,
+        correctedText: String(parsed.correctedText || f.text),
+        violates: Boolean(parsed.violates),
+        matchedBan: parsed.matchedBan || null,
+      };
     } catch {
-      return "";
+      return { t: f.t, correctedText: f.text, violates: false, matchedBan: null };
     }
   });
+}
 
-  const seen = new Set();
+/* Tesseract 텍스트 전체(USP/브랜드 매칭용) + 검증된 의심 프레임 판정을 합쳐서 최종 검수용 요약을 만든다. */
+function buildOcrSummary(zipped, verifications) {
+  const verByT = new Map(verifications.map((v) => [v.t, v]));
   const lines = [];
-  frames.forEach((f, i) => {
-    const text = perFrame[i];
-    if (text && !seen.has(text)) {
-      seen.add(text);
-      lines.push(`[${f.t}s] ${text}`);
+  for (const r of zipped) {
+    if (!r.text) continue;
+    const v = verByT.get(r.t);
+    if (v) {
+      lines.push(
+        v.violates
+          ? `[${r.t}s] "${v.correctedText}" → 금칙어 위반 확인됨 (${v.matchedBan})`
+          : `[${r.t}s] "${v.correctedText}" → OCR 오인식/오탈자로 확인됨 (금칙어 아님)`,
+      );
+    } else {
+      lines.push(`[${r.t}s] ${r.text}`);
     }
-  });
+  }
   return lines.join("\n");
 }
 
@@ -487,6 +564,16 @@ app.post("/api/campaigns/:id/influencers/bulk", requireSupabase, async (req, res
   res.json(data);
 });
 
+app.get("/api/influencers/:id", requireSupabase, async (req, res) => {
+  const { data, error } = await supabase
+    .from("reelcheck_influencers")
+    .select("*")
+    .eq("id", req.params.id)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
   const { status, result, feedback, videoName, transcript, review } = req.body || {};
   const patch = {};
@@ -507,40 +594,104 @@ app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
   res.json(data);
 });
 
+/*
+ * 화면 자막 검수는 crv 스캔 + Tesseract + (의심 프레임만) GPT-4o 검증까지 거치면
+ * 오래 걸릴 수 있어 Cloudflare/Render의 응답 대기 한도(~100초)를 넘길 수 있다.
+ * 그래서 음성 검수 결과는 즉시 응답하고, 화면 자막 검수는 응답 이후 백그라운드에서
+ * 계속 진행해 끝나면 Supabase의 해당 인플루언서 행을 갱신한다.
+ */
+async function continueOcrInBackground({ videoPath, influencerId, campaign, audioText }) {
+  try {
+    let frames = [];
+    try {
+      const kf = await keyframes(videoPath, { maxFrames: 60 });
+      frames = kf.frames;
+    } catch (e) {
+      console.warn(`[백그라운드] 키프레임 추출 실패, 화면 자막 검수 스킵: ${e.message}`);
+      return;
+    }
+    if (!frames.length) return;
+
+    const ocrResults = await ocrFramesTesseract(frames);
+    const zipped = frames.map((f, i) => ({ ...f, ...ocrResults[i] }));
+
+    const suspicious = findSuspiciousFrames(zipped, campaign.bans);
+    const verifications = suspicious.length ? await verifySuspiciousVision(suspicious, campaign.bans) : [];
+
+    const ocrSummary = buildOcrSummary(zipped, verifications);
+    const combinedText = `[음성 전사]\n${audioText}\n\n[화면 자막/텍스트 (OCR: Tesseract${verifications.length ? " + GPT-4o 검증" : ""})]\n${ocrSummary || "(감지된 텍스트 없음)"}`;
+
+    const review = await reviewAgainstGuidelines(combinedText, campaign);
+
+    if (supabase && influencerId) {
+      await supabase
+        .from("reelcheck_influencers")
+        .update({
+          status: "검수완료",
+          result: review.result,
+          feedback: review.feedback,
+          transcript: audioText,
+          review,
+        })
+        .eq("id", influencerId);
+    }
+  } finally {
+    fs.rm(videoPath, { force: true }).catch(() => {});
+  }
+}
+
 app.post("/api/transcribe", upload.single("video"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "video 필드에 파일을 담아 보내주세요." });
+  const videoPath = req.file.path;
+  const influencerId = req.body?.influencerId || null;
+  let campaign = null;
   try {
-    const [transcriptResult, frameResult] = await Promise.allSettled([
-      transcribe(req.file.path),
-      keyframes(req.file.path, { maxFrames: 28 }),
-    ]);
-    if (transcriptResult.status === "rejected") throw transcriptResult.reason;
-    const result = transcriptResult.value;
+    campaign = req.body?.campaign ? JSON.parse(req.body.campaign) : null;
+  } catch {
+    /* 잘못된 캠페인 JSON은 무시하고 음성 전사만 진행 */
+  }
 
-    let ocrText = "";
-    let ocrWarning = null;
-    if (frameResult.status === "fulfilled") {
-      try {
-        ocrText = await ocrFrames(frameResult.value.frames);
-      } catch (e) {
-        ocrWarning = `OCR 실패: ${e.message}`;
-      }
-    } else {
-      ocrWarning = `키프레임 추출 실패: ${frameResult.reason.message}`;
-    }
+  try {
+    const result = await transcribe(videoPath);
 
     let review = null;
-    if (req.body?.campaign) {
+    if (campaign) {
       try {
-        const combinedText = `[음성 전사]\n${result.text}\n\n[화면 자막/텍스트 (OCR)]\n${ocrText || "(감지된 텍스트 없음)"}`;
-        review = await reviewAgainstGuidelines(combinedText, JSON.parse(req.body.campaign));
+        const audioOnlyText = `[음성 전사]\n${result.text}\n\n[화면 자막/텍스트 (OCR)]\n(화면 자막 검수 진행 중 — 잠시 후 결과가 갱신됩니다)`;
+        review = await reviewAgainstGuidelines(audioOnlyText, campaign);
       } catch (e) {
         review = { error: String(e.message || e) };
       }
     }
-    res.json({ ...result, ocrText, ocrWarning, review });
-  } catch (e) { fail(res, e); }
-  finally { fs.rm(req.file.path, { force: true }).catch(() => {}); }
+
+    const canContinue = Boolean(campaign && !review?.error && influencerId);
+
+    if (supabase && influencerId) {
+      await supabase
+        .from("reelcheck_influencers")
+        .update({
+          status: canContinue ? "검수완료(음성)" : "검수완료",
+          result: review?.result || "-",
+          feedback: review?.feedback || "",
+          transcript: result.text,
+        })
+        .eq("id", influencerId)
+        .then(() => {}, () => {});
+    }
+
+    res.json({ ...result, ocrPending: canContinue, review });
+
+    if (canContinue) {
+      continueOcrInBackground({ videoPath, influencerId, campaign, audioText: result.text }).catch((e) => {
+        console.error("[백그라운드] 화면 자막 검수 실패:", e);
+      });
+    } else {
+      fs.rm(videoPath, { force: true }).catch(() => {});
+    }
+  } catch (e) {
+    fail(res, e);
+    fs.rm(videoPath, { force: true }).catch(() => {});
+  }
 });
 
 app.post("/api/frames", upload.single("video"), async (req, res) => {

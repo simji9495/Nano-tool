@@ -201,30 +201,47 @@ function App() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       const workbook = XLSX.read(evt.target.result, { type: "binary" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rawData = XLSX.utils.sheet_to_json(sheet);
       const formatted = rawData.map((item, idx) => ({
-        id: Date.now() + idx,
         name: (item["이름"] || item["name"] || `인플루언서_${idx + 1}`)
           .toString()
           .trim(),
         handle: (item["핸들"] || item["handle"] || "@unknown")
           .toString()
           .trim(),
-        status: "미제출",
-        result: "-",
       }));
-      setInfluencers(formatted);
-      fetch(`${API_BASE}/api/campaigns/${selectedCampaignId}/influencers/bulk`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ influencers: formatted }),
-      }).catch(() => {});
-      alert(
-        `🎉 [${selectedCampaign.name}] 명단이 ${formatted.length}명으로 갱신되었습니다.`,
-      );
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/campaigns/${selectedCampaignId}/influencers/bulk`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ influencers: formatted }),
+          },
+        );
+        const rows = await res.json();
+        if (!res.ok) throw new Error(rows.error || "명단 등록에 실패했습니다.");
+        // 서버가 실제로 발급한 id(uuid)를 그대로 써야 이후 검수/피드백 저장이 해당 행을 정확히 찾아간다.
+        setInfluencers(
+          rows.map((row) => ({
+            id: row.id,
+            name: row.name,
+            handle: row.handle,
+            status: row.status,
+            result: row.result,
+            feedback: row.feedback || "",
+          })),
+        );
+        alert(
+          `🎉 [${selectedCampaign.name}] 명단이 ${rows.length}명으로 갱신되었습니다.`,
+        );
+      } catch (err) {
+        alert(`❌ 명단 등록 실패: ${err.message}`);
+      }
     };
     reader.readAsBinaryString(file);
   };
@@ -240,6 +257,38 @@ function App() {
     totalCount > 0
       ? Math.round((passCount / (passCount + failCount || 1)) * 100)
       : 0;
+
+  // 📡 백그라운드에서 진행 중인 화면 자막 검수가 끝났는지 주기적으로 확인
+  const pollForFinalReview = (id, attemptsLeft = 40) => {
+    if (attemptsLeft <= 0) return;
+    setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/influencers/${id}`);
+        if (res.ok) {
+          const row = await res.json();
+          if (row.status === "검수완료") {
+            setInfluencers((prev) =>
+              prev.map((inf) =>
+                inf.id === id
+                  ? {
+                      ...inf,
+                      status: "검수완료",
+                      result: row.result,
+                      feedback: row.feedback,
+                      review: row.review,
+                    }
+                  : inf,
+              ),
+            );
+            return; // 최종 결과 도착, 폴링 종료
+          }
+        }
+      } catch {
+        /* 다음 폴링에서 재시도 */
+      }
+      pollForFinalReview(id, attemptsLeft - 1);
+    }, 5000);
+  };
 
   // 🎬 인플루언서별 영상 파일 업로드 → 백엔드 STT + 가이드라인 검수 요청
   const handleVideoUpload = async (id, file) => {
@@ -259,6 +308,7 @@ function App() {
     const form = new FormData();
     form.append("video", file);
     form.append("campaign", JSON.stringify(campaign));
+    form.append("influencerId", id);
 
     try {
       const res = await fetch(`${API_BASE}/api/transcribe`, {
@@ -290,7 +340,8 @@ function App() {
           }
           return {
             ...inf,
-            status: "검수완료",
+            // 화면 자막 검수가 백그라운드에서 진행 중이면 음성 기준 임시 결과로 표시
+            status: data.ocrPending ? "검수완료(음성)" : "검수완료",
             result: review.result,
             feedback: review.feedback,
             transcript: data.text,
@@ -298,6 +349,8 @@ function App() {
           };
         }),
       );
+
+      if (data.ocrPending) pollForFinalReview(id);
     } catch (err) {
       setInfluencers((prev) =>
         prev.map((inf) =>
