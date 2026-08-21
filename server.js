@@ -255,7 +255,7 @@ async function reviewAgainstGuidelines(text, campaign) {
     bans: Array.isArray(campaign?.bans) ? campaign.bans.filter(Boolean) : [],
   };
 
-  const prompt = `다음은 인플루언서 광고 영상에서 추출한 발화 텍스트다. 아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라.
+  const prompt = `다음은 인플루언서 광고 영상에서 추출한 음성 전사 및 화면 자막(OCR) 텍스트다. 아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라.
 
 [캠페인 가이드라인]
 - 정확한 브랜드명: ${guideline.brand || "(미지정)"}
@@ -300,6 +300,69 @@ async function reviewAgainstGuidelines(text, campaign) {
     violatedBans: Array.isArray(parsed.violatedBans) ? parsed.violatedBans : [],
     feedback: String(parsed.feedback || ""),
   };
+}
+
+/* ───────────── 3. 화면 자막 OCR (GPT-4o 비전) ───────────── */
+
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < items.length) {
+      const i = idx++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+async function ocrFrames(frames) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
+  if (!frames.length) return "";
+
+  const model = process.env.OCR_MODEL || "gpt-4o-mini";
+  const perFrame = await mapWithConcurrency(frames, 5, async (f) => {
+    try {
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "이 이미지에 보이는 자막이나 화면에 찍힌 텍스트를 그대로 읽어서 반환해라. 텍스트가 없으면 빈 문자열만 반환해라. 설명하지 말고 텍스트만 반환해라.",
+                },
+                { type: "image_url", image_url: { url: f.dataUrl } },
+              ],
+            },
+          ],
+          temperature: 0,
+        }),
+      });
+      if (!r.ok) return "";
+      const d = await r.json();
+      return (d.choices?.[0]?.message?.content || "").trim();
+    } catch {
+      return "";
+    }
+  });
+
+  const seen = new Set();
+  const lines = [];
+  frames.forEach((f, i) => {
+    const text = perFrame[i];
+    if (text && !seen.has(text)) {
+      seen.add(text);
+      lines.push(`[${f.t}s] ${text}`);
+    }
+  });
+  return lines.join("\n");
 }
 
 /* ───────────── 라우트 ───────────── */
@@ -447,16 +510,35 @@ app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
 app.post("/api/transcribe", upload.single("video"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "video 필드에 파일을 담아 보내주세요." });
   try {
-    const result = await transcribe(req.file.path);
+    const [transcriptResult, frameResult] = await Promise.allSettled([
+      transcribe(req.file.path),
+      keyframes(req.file.path, {}),
+    ]);
+    if (transcriptResult.status === "rejected") throw transcriptResult.reason;
+    const result = transcriptResult.value;
+
+    let ocrText = "";
+    let ocrWarning = null;
+    if (frameResult.status === "fulfilled") {
+      try {
+        ocrText = await ocrFrames(frameResult.value.frames);
+      } catch (e) {
+        ocrWarning = `OCR 실패: ${e.message}`;
+      }
+    } else {
+      ocrWarning = `키프레임 추출 실패: ${frameResult.reason.message}`;
+    }
+
     let review = null;
     if (req.body?.campaign) {
       try {
-        review = await reviewAgainstGuidelines(result.text, JSON.parse(req.body.campaign));
+        const combinedText = `[음성 전사]\n${result.text}\n\n[화면 자막/텍스트 (OCR)]\n${ocrText || "(감지된 텍스트 없음)"}`;
+        review = await reviewAgainstGuidelines(combinedText, JSON.parse(req.body.campaign));
       } catch (e) {
         review = { error: String(e.message || e) };
       }
     }
-    res.json({ ...result, review });
+    res.json({ ...result, ocrText, ocrWarning, review });
   } catch (e) { fail(res, e); }
   finally { fs.rm(req.file.path, { force: true }).catch(() => {}); }
 });
