@@ -321,7 +321,18 @@ async function mapWithConcurrency(items, limit, fn) {
 /* Tesseract worker는 초기화가 무거워서 프로세스당 하나만 만들어 재사용한다. */
 let tesseractWorkerPromise = null;
 function getTesseractWorker() {
-  if (!tesseractWorkerPromise) tesseractWorkerPromise = createWorker("kor+eng");
+  if (!tesseractWorkerPromise) {
+    const cachePath = path.join(os.tmpdir(), "reelcheck-tesseract-cache");
+    tesseractWorkerPromise = fs
+      .mkdir(cachePath, { recursive: true })
+      .then(() =>
+        createWorker("kor+eng", 1, {
+          // 기본값(현재 작업 디렉터리)에 언어 데이터가 다운로드되어 저장소에 실수로
+          // 커밋되는 걸 막기 위해 임시 디렉터리로 캐시 경로를 명시한다.
+          cachePath,
+        }),
+      );
+  }
   return tesseractWorkerPromise;
 }
 

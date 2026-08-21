@@ -43,6 +43,9 @@
         .drop { border:1px dashed var(--line); border-radius:3px; background:#FBFCFA; padding:34px 20px; text-align:center; }
         .st { display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10px; padding:4px 8px; border-radius:2px; border:1px solid currentColor; }
         .st.pass { color:var(--pass); background:#EDF5F1; }
+        .ocr-pending { display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--fix); margin-top:3px; }
+        .ocr-pending .dot { width:6px; height:6px; border-radius:50%; background:var(--fix); animation: rc-pulse 1.1s ease-in-out infinite; }
+        @keyframes rc-pulse { 0%,100% { opacity:1; } 50% { opacity:.25; } }
     </style>
 </head>
 <body class="rc">

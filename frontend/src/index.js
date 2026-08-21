@@ -676,7 +676,15 @@ function App() {
                           {inf.handle}
                         </div>
                       </td>
-                      <td>{inf.status}</td>
+                      <td>
+                        {inf.status}
+                        {inf.status?.includes("(음성)") && (
+                          <div className="ocr-pending">
+                            <span className="dot" />
+                            화면 자막 확인 중
+                          </div>
+                        )}
+                      </td>
                       <td>
                         <span
                           className={`st ${inf.result === "통과" ? "pass" : inf.result === "-" ? "none" : "block"}`}
@@ -739,7 +747,15 @@ function App() {
                         {inf.handle}
                       </div>
                     </td>
-                    <td>{inf.status}</td>
+                    <td>
+                      {inf.status}
+                      {inf.status?.includes("(음성)") && (
+                        <div className="ocr-pending">
+                          <span className="dot" />
+                          화면 자막 확인 중
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <span
                         className={`st ${inf.result === "통과" ? "pass" : inf.result === "-" ? "none" : "block"}`}
@@ -829,6 +845,12 @@ function App() {
                   ? `${modalInf.name} 반려 사유`
                   : `${modalInf.name} 피드백 작성`}
               </h3>
+              {modalInf.status?.includes("(음성)") && (
+                <div className="ocr-pending" style={{ marginBottom: "10px" }}>
+                  <span className="dot" />
+                  화면 자막 검수가 아직 진행 중입니다. 결과가 업데이트되면 자동으로 반영됩니다.
+                </div>
+              )}
               {modalInf.review && !modalInf.review.error && (
                 <div
                   style={{
