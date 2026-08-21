@@ -323,7 +323,7 @@ async function ocrFrames(frames) {
   if (!frames.length) return "";
 
   const model = process.env.OCR_MODEL || "gpt-4o-mini";
-  const perFrame = await mapWithConcurrency(frames, 5, async (f) => {
+  const perFrame = await mapWithConcurrency(frames, 8, async (f) => {
     try {
       const r = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -512,7 +512,7 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
   try {
     const [transcriptResult, frameResult] = await Promise.allSettled([
       transcribe(req.file.path),
-      keyframes(req.file.path, {}),
+      keyframes(req.file.path, { maxFrames: 28 }),
     ]);
     if (transcriptResult.status === "rejected") throw transcriptResult.reason;
     const result = transcriptResult.value;
