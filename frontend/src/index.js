@@ -259,8 +259,18 @@ function App() {
       : 0;
 
   // 📡 백그라운드에서 진행 중인 화면 자막 검수가 끝났는지 주기적으로 확인
-  const pollForFinalReview = (id, attemptsLeft = 40) => {
-    if (attemptsLeft <= 0) return;
+  // crv 키프레임 추출이 서버 사양에 따라 오래 걸릴 수 있어, 5초 간격 × 90회(7분 30초)까지 기다려본다.
+  const pollForFinalReview = (id, attemptsLeft = 90) => {
+    if (attemptsLeft <= 0) {
+      setInfluencers((prev) =>
+        prev.map((inf) =>
+          inf.id === id
+            ? { ...inf, status: "검수완료(음성) — 자막 확인이 오래 걸리고 있습니다. 새로고침해서 다시 확인해주세요." }
+            : inf,
+        ),
+      );
+      return;
+    }
     setTimeout(async () => {
       try {
         const res = await fetch(`${API_BASE}/api/influencers/${id}`);

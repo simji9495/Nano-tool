@@ -612,27 +612,61 @@ app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
  * 계속 진행해 끝나면 Supabase의 해당 인플루언서 행을 갱신한다.
  */
 async function continueOcrInBackground({ videoPath, influencerId, campaign, audioText }) {
+  const t0 = Date.now();
+  const timings = {};
+
+  // 화면 자막 검수가 어디서 실패하든(키프레임 추출/OCR/API 요청 한도 등) 여기서 반드시
+  // "검수완료"로 확정해야 한다. 안 그러면 프론트엔드가 "검수완료(음성)" 상태에서 폴링을
+  // 계속하다가 조용히 멈춰버려서, 사용자에게는 원인 모를 무한 대기로 보인다.
+  // 이미 1단계에서 저장해둔 음성 기준 결과가 있으니 그걸 최종 결과로 그대로 확정한다.
+  const finalizeAsAudioOnly = async (reason) => {
+    console.warn(`[백그라운드] 화면 자막 검수 중단 (${reason}) — 음성 기준 결과로 확정합니다.`);
+    if (supabase && influencerId) {
+      await supabase
+        .from("reelcheck_influencers")
+        .update({ status: "검수완료" })
+        .eq("id", influencerId)
+        .catch(() => {});
+    }
+  };
+
   try {
     let frames = [];
     try {
       const kf = await keyframes(videoPath, { maxFrames: 60 });
       frames = kf.frames;
     } catch (e) {
-      console.warn(`[백그라운드] 키프레임 추출 실패, 화면 자막 검수 스킵: ${e.message}`);
+      await finalizeAsAudioOnly(`키프레임 추출 실패: ${e.message}`);
       return;
     }
-    if (!frames.length) return;
+    timings.keyframesMs = Date.now() - t0;
+    timings.frameCount = frames.length;
+    if (!frames.length) {
+      await finalizeAsAudioOnly("추출된 프레임 없음");
+      return;
+    }
 
+    const t1 = Date.now();
     const ocrResults = await ocrFramesTesseract(frames);
+    timings.tesseractMs = Date.now() - t1;
     const zipped = frames.map((f, i) => ({ ...f, ...ocrResults[i] }));
 
     const suspicious = findSuspiciousFrames(zipped, campaign.bans);
+    timings.suspiciousCount = suspicious.length;
+
+    const t2 = Date.now();
     const verifications = suspicious.length ? await verifySuspiciousVision(suspicious, campaign.bans) : [];
+    timings.visionVerifyMs = Date.now() - t2;
 
     const ocrSummary = buildOcrSummary(zipped, verifications);
     const combinedText = `[음성 전사]\n${audioText}\n\n[화면 자막/텍스트 (OCR: Tesseract${verifications.length ? " + GPT-4o 검증" : ""})]\n${ocrSummary || "(감지된 텍스트 없음)"}`;
 
+    const t3 = Date.now();
     const review = await reviewAgainstGuidelines(combinedText, campaign);
+    timings.finalReviewMs = Date.now() - t3;
+    timings.totalMs = Date.now() - t0;
+
+    console.log("[백그라운드 타이밍]", JSON.stringify(timings));
 
     if (supabase && influencerId) {
       await supabase
@@ -642,10 +676,13 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
           result: review.result,
           feedback: review.feedback,
           transcript: audioText,
-          review,
+          // _timingsMs는 병목 진단용 임시 디버그 필드 (프론트엔드는 사용하지 않음)
+          review: { ...review, _timingsMs: timings },
         })
         .eq("id", influencerId);
     }
+  } catch (e) {
+    await finalizeAsAudioOnly(`오류: ${e.message}`);
   } finally {
     fs.rm(videoPath, { force: true }).catch(() => {});
   }
