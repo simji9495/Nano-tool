@@ -75,6 +75,49 @@ const cleanup = async (...dirs) => {
   }
 };
 
+/* 동시에 실행되는 ffmpeg 압축 프로세스 수를 제한한다. 업로드가 짧은 시간에
+ * 몰리면 1 CPU 서버에서 압축 작업끼리 CPU를 나눠 먹어 전부 같이 느려지므로,
+ * 초과분은 큐에서 기다렸다가 순서대로 처리한다. */
+function createSemaphore(limit) {
+  let active = 0;
+  const queue = [];
+  const runNext = () => {
+    if (active >= limit || queue.length === 0) return;
+    active++;
+    const { fn, resolve, reject } = queue.shift();
+    fn()
+      .then(resolve, reject)
+      .finally(() => {
+        active--;
+        runNext();
+      });
+  };
+  return (fn) =>
+    new Promise((resolve, reject) => {
+      queue.push({ fn, resolve, reject });
+      runNext();
+    });
+}
+const withCompressionSlot = createSemaphore(Number(process.env.MAX_CONCURRENT_COMPRESSIONS) || 2);
+
+/* 자막 검수는 480p면 충분한데 원본(1080p 이상)을 그대로 crv/Tesseract에 넣으면
+ * 해상도에 비례해서 CPU 부하가 커진다. 업로드 즉시 저해상도·고속 프리셋으로
+ * 압축한 프록시 파일을 만들어, 이후 키프레임 추출은 이 작은 파일로만 진행한다.
+ * 오디오는 화질과 무관하니 그대로 복사해서 STT 품질에 영향이 없게 한다. */
+async function compressForOcr(videoPath) {
+  const dir = await workdir();
+  const out = path.join(dir, "proxy.mp4");
+  await run("ffmpeg", [
+    "-y", "-i", videoPath,
+    "-vf", "scale=-2:480",
+    "-preset", "ultrafast",
+    "-b:v", "600k",
+    "-c:a", "copy",
+    out,
+  ]);
+  return { path: out, dir };
+}
+
 async function probeDuration(file) {
   const { stdout } = await run("ffprobe", [
     "-v", "error", "-show_entries", "format=duration",
@@ -626,7 +669,7 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
         .from("reelcheck_influencers")
         .update({ status: "검수완료" })
         .eq("id", influencerId)
-        .catch(() => {});
+        .then(() => {}, () => {});
     }
   };
 
@@ -682,6 +725,7 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
         .eq("id", influencerId);
     }
   } catch (e) {
+    console.log("[백그라운드 타이밍 (실패 전까지)]", JSON.stringify(timings));
     await finalizeAsAudioOnly(`오류: ${e.message}`);
   } finally {
     fs.rm(videoPath, { force: true }).catch(() => {});
@@ -700,7 +744,17 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
   }
 
   try {
-    const result = await transcribe(videoPath);
+    // 음성 전사(Whisper API 호출, 네트워크 대기)와 화면 자막용 저해상도 압축(로컬 CPU)을
+    // 동시에 진행한다 — 압축이 Whisper 응답을 기다리는 시간에 "묻혀서" 거의 공짜가 된다.
+    const [result, proxy] = await Promise.all([
+      transcribe(videoPath),
+      withCompressionSlot(() => compressForOcr(videoPath)).catch((e) => {
+        console.warn(`[다운샘플링] 압축 실패, 원본으로 대체: ${e.message}`);
+        return null;
+      }),
+    ]);
+    const ocrVideoPath = proxy?.path || videoPath;
+    if (proxy) fs.rm(videoPath, { force: true }).catch(() => {}); // 압축 성공했으면 원본은 더 필요 없음
 
     let review = null;
     if (campaign) {
@@ -730,11 +784,11 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
     res.json({ ...result, ocrPending: canContinue, review });
 
     if (canContinue) {
-      continueOcrInBackground({ videoPath, influencerId, campaign, audioText: result.text }).catch((e) => {
+      continueOcrInBackground({ videoPath: ocrVideoPath, influencerId, campaign, audioText: result.text }).catch((e) => {
         console.error("[백그라운드] 화면 자막 검수 실패:", e);
       });
     } else {
-      fs.rm(videoPath, { force: true }).catch(() => {});
+      fs.rm(ocrVideoPath, { force: true }).catch(() => {});
     }
   } catch (e) {
     fail(res, e);
