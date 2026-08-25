@@ -45,10 +45,11 @@ if (proxyUrl) setGlobalDispatcher(new ProxyAgent(proxyUrl));
 const run = promisify(execFile);
 const app = express();
 
-/* OpenAI 요청 한도(429)는 대개 아주 짧은 시간(수백ms~수초) 안에 풀린다.
- * 재시도 없이 바로 실패시키면 백그라운드 검수가 "실패"로 확정돼버려서
- * 잠깐만 기다리면 될 일에 자막 검수 전체를 놓치게 된다. */
-async function fetchOpenAIWithRetry(url, options, { retries = 3, baseDelayMs = 1000 } = {}) {
+/* OpenAI 요청 한도(429)는 대개 짧으면 수백ms~수초 안에 풀리지만, 의심 프레임이
+ * 많아 짧은 시간에 호출이 몰리면(예: 60장 중 56장 검증) 계정 분당 토큰 한도가
+ * 통째로 바닥나 10초 넘게도 안 풀릴 수 있다 — 재시도 없이 바로 실패시키면
+ * 잠깐만 더 기다리면 될 일에 자막 검수 전체를 놓치게 된다. */
+async function fetchOpenAIWithRetry(url, options, { retries = 6, baseDelayMs = 1500 } = {}) {
   for (let attempt = 0; ; attempt++) {
     const r = await fetch(url, options);
     if (r.status !== 429 || attempt >= retries) return r;
@@ -592,7 +593,10 @@ async function verifySuspiciousVision(frames, bans) {
   const model = process.env.OCR_MODEL || "gpt-4o-mini";
   const banList = (bans || []).filter(Boolean).join(", ") || "(지정된 금칙어 없음)";
 
-  return mapWithConcurrency(frames, 5, async (f) => {
+  // 의심 프레임이 많으면(예: 60장 중 56장) 동시에 5개씩 쏘는 것만으로도
+  // 계정 분당 토큰 한도(TPM)를 순식간에 다 써버려서, 재시도로도 못 버틸 만큼
+  // 429가 몰린다. 동시 호출을 줄여 소모 속도를 늦춘다.
+  return mapWithConcurrency(frames, 2, async (f) => {
     try {
       const prompt = `이 이미지의 자막에서 다음 금칙어 목록 위반 소지가 있는지 검수해라: ${banList}.
 로컬 OCR(Tesseract)이 이 프레임에서 "${f.text}"라고 읽었다. 이게 실제로 금칙어를 포함한 문맥인지, 아니면 OCR의 오인식/오탈자인지 이미지를 직접 보고 판단해라.
