@@ -7,6 +7,26 @@ import CampaignCreate, { formatCampaignPeriod } from "./CampaignCreate";
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8787";
 const STORAGE_KEY = "reelcheck_campaigns_v1";
 
+/* Render 서버를 거치지 않고 스토리지(서명된 URL)로 직접 업로드한다 — 대용량
+ * 영상이 Render의 요청 처리 시간 한도(~300초)에 걸려 실패하는 문제를 피하기
+ * 위함. XMLHttpRequest를 쓰는 이유는 fetch가 업로드 진행률(progress)을
+ * 지원하지 않기 때문. */
+function uploadFileWithProgress(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`업로드 실패 (HTTP ${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error("업로드 중 네트워크 오류가 발생했습니다."));
+    xhr.send(file);
+  });
+}
+
 const defaultGuidelines = {
   brand: "",
   product: "",
@@ -373,20 +393,44 @@ function App() {
     setInfluencers((prev) =>
       prev.map((inf) =>
         inf.id === id
-          ? { ...inf, status: "검수 중...", videoName: file.name }
+          ? { ...inf, status: "업로드 중... 0%", videoName: file.name }
           : inf,
       ),
     );
 
-    const form = new FormData();
-    form.append("video", file);
-    form.append("campaign", JSON.stringify(campaign));
-    form.append("influencerId", id);
-
     try {
-      const res = await fetch(`${API_BASE}/api/transcribe`, {
+      // 1) 업로드용 서명 URL 발급 (Render 서버가 아니라 스토리지로 바로 올릴 주소)
+      const presignRes = await fetch(`${API_BASE}/api/uploads/presign`, {
         method: "POST",
-        body: form,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ influencerId: id, filename: file.name }),
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok) throw new Error(presignData.error || "업로드 준비에 실패했습니다.");
+
+      // 2) 브라우저 → 스토리지 직접 업로드. Render의 요청 처리 시간 한도(~300초)를
+      // 타지 않아서 느린 회선에서도 대용량 영상이 끝까지 올라간다.
+      await uploadFileWithProgress(presignData.signedUrl, file, (pct) => {
+        setInfluencers((prev) =>
+          prev.map((inf) =>
+            inf.id === id ? { ...inf, status: `업로드 중... ${pct}%` } : inf,
+          ),
+        );
+      });
+
+      setInfluencers((prev) =>
+        prev.map((inf) => (inf.id === id ? { ...inf, status: "검수 중..." } : inf)),
+      );
+
+      // 3) 업로드 완료를 서버에 알려 검수 시작
+      const res = await fetch(`${API_BASE}/api/transcribe/from-storage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storagePath: presignData.path,
+          influencerId: id,
+          campaign,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "검수 요청이 실패했습니다.");

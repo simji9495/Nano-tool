@@ -14,11 +14,22 @@ import multer from "multer";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createWorker } from "tesseract.js";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
@@ -69,6 +80,69 @@ const requireSupabase = (_req, res, next) => {
   }
   next();
 };
+
+/* 브라우저가 대용량 영상을 Render 서버가 아니라 Cloudflare R2에 직접 올릴 수
+ * 있게 쓰는 버킷. 업로드 자체는 Render의 요청 처리 시간 한도(~300초)를 타지
+ * 않는다. Supabase Storage는 무료 티어 기준 파일 1개당 50MB로 제한돼있어
+ * 대용량 영상엔 못 써서, R2(개별 파일 사실상 무제한, 전송량 무료)를 쓴다. */
+const R2_BUCKET = process.env.R2_BUCKET_NAME || "reelcheck-uploads";
+const UPLOADS_PREFIX = "uploads/";
+
+const r2 =
+  process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY
+    ? new S3Client({
+        region: "auto",
+        endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        credentials: {
+          accessKeyId: process.env.R2_ACCESS_KEY_ID,
+          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+        },
+      })
+    : null;
+
+const requireR2 = (_req, res, next) => {
+  if (!r2) {
+    return res.status(503).json({
+      error: "R2가 설정되지 않았습니다. R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME을 확인해주세요.",
+    });
+  }
+  next();
+};
+
+async function verifyR2Connection() {
+  if (!r2) return;
+  try {
+    await r2.send(new ListObjectsV2Command({ Bucket: R2_BUCKET, MaxKeys: 1 }));
+    console.log(`[R2] "${R2_BUCKET}" 버킷 연결 확인 완료`);
+  } catch (e) {
+    console.warn(`[R2] 버킷 연결 확인 실패: ${e.message}`);
+  }
+}
+
+/* 브라우저가 R2 업로드까지만 끝내고(창을 닫는 등) 서버에 "처리 시작"을
+ * 알리지 못하면, 파일이 R2에 고아로 남는다. 일정 시간 지난 파일은
+ * 주기적으로 정리한다. */
+const ORPHAN_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2시간
+const ORPHAN_CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // 30분마다 확인
+
+async function cleanupOrphanedUploads() {
+  if (!r2) return;
+  try {
+    const { Contents } = await r2.send(
+      new ListObjectsV2Command({ Bucket: R2_BUCKET, Prefix: UPLOADS_PREFIX, MaxKeys: 1000 }),
+    );
+    const now = Date.now();
+    const stale = (Contents || [])
+      .filter((o) => o.Key && o.LastModified && now - new Date(o.LastModified).getTime() > ORPHAN_MAX_AGE_MS)
+      .map((o) => ({ Key: o.Key }));
+    if (stale.length) {
+      await r2.send(new DeleteObjectsCommand({ Bucket: R2_BUCKET, Delete: { Objects: stale } }));
+      console.log(`[R2] 고아 업로드 파일 ${stale.length}건 정리`);
+    }
+  } catch (e) {
+    console.warn(`[R2] 고아 파일 정리 실패: ${e.message}`);
+  }
+}
 
 app.use(cors({ origin: process.env.ALLOW_ORIGIN || "*" }));
 app.use(express.json());
@@ -564,6 +638,7 @@ app.get("/api/health", async (_req, res) => {
     crv: await check(CRV_BIN, ["--help"]),
     openaiKey: Boolean(process.env.OPENAI_API_KEY),
     supabase: Boolean(supabase),
+    r2: Boolean(r2),
     sttModel: STT_MODEL,
   });
 });
@@ -807,17 +882,9 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
   }
 }
 
-app.post("/api/transcribe", upload.single("video"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: "video 필드에 파일을 담아 보내주세요." });
-  const videoPath = req.file.path;
-  const influencerId = req.body?.influencerId || null;
-  let campaign = null;
-  try {
-    campaign = req.body?.campaign ? JSON.parse(req.body.campaign) : null;
-  } catch {
-    /* 잘못된 캠페인 JSON은 무시하고 음성 전사만 진행 */
-  }
-
+/* 업로드 경로(멀티파트 직접 업로드 / 스토리지 경유)와 무관하게, 로컬 디스크에
+ * 영상 파일이 준비된 이후의 검수 로직은 완전히 동일하다. */
+async function processUploadedVideo({ videoPath, influencerId, campaign, res }) {
   try {
     // 음성 전사(Whisper API 호출, 네트워크 대기)와 화면 자막용 저해상도 압축(로컬 CPU)을
     // 동시에 진행한다 — 압축이 Whisper 응답을 기다리는 시간에 "묻혀서" 거의 공짜가 된다.
@@ -885,6 +952,57 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
     fail(res, e);
     fs.rm(videoPath, { force: true }).catch(() => {});
   }
+}
+
+app.post("/api/transcribe", upload.single("video"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "video 필드에 파일을 담아 보내주세요." });
+  const videoPath = req.file.path;
+  const influencerId = req.body?.influencerId || null;
+  let campaign = null;
+  try {
+    campaign = req.body?.campaign ? JSON.parse(req.body.campaign) : null;
+  } catch {
+    /* 잘못된 캠페인 JSON은 무시하고 음성 전사만 진행 */
+  }
+  await processUploadedVideo({ videoPath, influencerId, campaign, res });
+});
+
+/* 대용량 영상용 경로: 브라우저가 이미 Supabase Storage에 직접 업로드를 끝낸
+ * 뒤, 어디에 올렸는지(storagePath)만 알려주면 서버가 받아와서 검수를 시작한다. */
+app.post("/api/uploads/presign", requireR2, async (req, res) => {
+  const influencerId = req.body?.influencerId || "misc";
+  const filename = String(req.body?.filename || "video").replace(/[^\w.-]+/g, "_");
+  const objectKey = `${UPLOADS_PREFIX}${Date.now()}-${influencerId}-${filename}`;
+  try {
+    const command = new PutObjectCommand({ Bucket: R2_BUCKET, Key: objectKey });
+    const signedUrl = await getSignedUrl(r2, command, { expiresIn: 3600 });
+    res.json({ path: objectKey, signedUrl });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/transcribe/from-storage", requireR2, async (req, res) => {
+  const { storagePath, influencerId, campaign } = req.body || {};
+  if (!storagePath) return res.status(400).json({ error: "storagePath가 필요합니다." });
+
+  const dir = await workdir();
+  const videoPath = path.join(dir, `source${path.extname(storagePath) || ".mp4"}`);
+  try {
+    const { Body } = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: storagePath }));
+    await pipeline(Body, createWriteStream(videoPath));
+    // 로컬로 잘 받았으니 R2엔 더 필요 없다 — 바로 정리한다.
+    r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: storagePath })).catch(() => {});
+  } catch (e) {
+    return fail(res, new Error(`스토리지에서 파일을 받지 못했습니다: ${e.message}`));
+  }
+
+  await processUploadedVideo({
+    videoPath,
+    influencerId: influencerId || null,
+    campaign: campaign || null,
+    res,
+  });
 });
 
 app.post("/api/frames", upload.single("video"), async (req, res) => {
@@ -920,7 +1038,11 @@ app.post("/api/inspect", upload.single("video"), async (req, res) => {
   finally { fs.rm(req.file.path, { force: true }).catch(() => {}); }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`REELCHECK 검수 서버 실행 중 → http://localhost:${PORT}`);
   console.log(`설치 상태 확인 → http://localhost:${PORT}/api/health`);
+
+  await verifyR2Connection();
+  cleanupOrphanedUploads();
+  setInterval(cleanupOrphanedUploads, ORPHAN_CLEANUP_INTERVAL_MS);
 });
