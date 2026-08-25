@@ -1,6 +1,20 @@
-import React from 'react';
+import React, { useState } from 'react';
 
-export default function CampaignSettings({ campaign, setCampaign }) {
+export default function CampaignSettings({ campaign, setCampaign, onSave }) {
+    const [saving, setSaving] = useState(false);
+
+    const handleSave = async () => {
+        setSaving(true);
+        try {
+            await onSave();
+            alert('가이드라인이 저장되었습니다.');
+        } catch (err) {
+            alert(`가이드라인 저장 실패: ${err.message}`);
+        } finally {
+            setSaving(false);
+        }
+    };
+
     return (
         <div className="card">
             <div className="card-hd"><h2>가이드라인 규칙 입력 폼</h2></div>
@@ -50,7 +64,7 @@ export default function CampaignSettings({ campaign, setCampaign }) {
                     + 금칙어 추가
                 </button>
             </div>
-            <button className="btn stamp" style={{ marginTop: '15px' }} onClick={() => alert('실시간 캠페인 가이드가 수정되었습니다.')}>가이드라인 저장</button>
+            <button className="btn stamp" style={{ marginTop: '15px' }} disabled={saving} onClick={handleSave}>{saving ? '저장 중...' : '가이드라인 저장'}</button>
         </div>
     );
 }

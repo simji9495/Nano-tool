@@ -93,13 +93,38 @@ function App() {
         if (!res.ok) return;
         const rows = await res.json();
         if (!Array.isArray(rows) || cancelled) return;
-        const localNow = loadLocal();
-        const mapped = rows.map((row) =>
-          mapApiCampaign(
-            row,
-            localNow.campaigns.find((c) => c.id === row.id)?.influencers || [],
-          ),
+
+        // 명단은 로컬 캐시가 아니라 서버(Supabase)를 원본으로 삼는다 — 그래야
+        // 새로고침하거나 다른 기기/브라우저에서 열어도 그대로 유지된다.
+        const influencerLists = await Promise.all(
+          rows.map(async (row) => {
+            try {
+              const r = await fetch(
+                `${API_BASE}/api/campaigns/${row.id}/influencers`,
+              );
+              if (!r.ok) return [];
+              const infRows = await r.json();
+              return Array.isArray(infRows)
+                ? infRows.map((inf) => ({
+                    id: inf.id,
+                    name: inf.name,
+                    handle: inf.handle,
+                    status: inf.status,
+                    result: inf.result,
+                    feedback: inf.feedback || "",
+                    videoName: inf.video_name || undefined,
+                    transcript: inf.transcript || undefined,
+                    review: inf.review || undefined,
+                  }))
+                : [];
+            } catch {
+              return [];
+            }
+          }),
         );
+        if (cancelled) return;
+
+        const mapped = rows.map((row, i) => mapApiCampaign(row, influencerLists[i]));
         if (!mapped.length) return;
         setCampaigns((prev) => {
           const remoteIds = new Set(mapped.map((c) => c.id));
@@ -114,6 +139,23 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  // 📋 가이드라인 저장 — 백엔드 캠페인 행에 실제로 반영해야 새로고침/다른 기기에서도 유지된다.
+  const saveGuidelines = async () => {
+    if (!selectedCampaignId) throw new Error("캠페인을 먼저 선택해주세요.");
+    const res = await fetch(`${API_BASE}/api/campaigns/${selectedCampaignId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        brand: campaign.brand,
+        product: campaign.product,
+        usps: campaign.usps,
+        bans: campaign.bans,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "가이드라인 저장에 실패했습니다.");
+  };
 
   const patchSelectedCampaign = (patch) => {
     if (!selectedCampaignId) return;
@@ -475,6 +517,7 @@ function App() {
                   <CampaignSettings
                     campaign={campaign}
                     setCampaign={setCampaign}
+                    onSave={saveGuidelines}
                   />
                 </div>
               )}
