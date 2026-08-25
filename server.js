@@ -446,6 +446,17 @@ brandMentioned/productMentioned는 실제로 지정된 브랜드명·제품명�
 무관해 보이는 단어("이 제품", "그거", 오인식된 엉뚱한 단어 등)는 실제 언급으로
 인정하지 말고, 그런 부분을 발견하면 occurrences에 type "typo"로 남겨라.
 
+금칙어 위반(violatedBans)은 텍스트에 그 의미가 명확하고 뚜렷하게 나타날 때만
+표시하라. 화면 자막(OCR)은 오인식이 흔해서, 무슨 뜻인지 불분명하거나 애매한
+문구만으로 "타사 브랜드 언급"처럼 해석이 필요한 금칙어를 단정하지 말고, 그런
+경우는 occurrences에 type "typo"로만 남겨라 — 위반으로 확신이 설 때만
+violatedBans/type "ban"으로 표시한다.
+
+brandMentioned/productMentioned/violatedBans는 서로 완전히 독립적으로
+판단하라 — 예를 들어 어딘가에서 금칙어 위반이 의심된다고 해서 브랜드/제품이
+언급되지 않은 것으로 끌어내리지 말고, 브랜드/제품 언급 여부는 오직 그 자체의
+실제 언급 여부만 보고 판단하라.
+
 [캠페인 가이드라인]
 - 정확한 브랜드명: ${guideline.brand || "(미지정)"}
 - 정확한 제품명: ${guideline.product || "(미지정)"}

@@ -1112,6 +1112,11 @@ function App() {
                   )}
                 </>
               )}
+              {isView && hasSplitReview && (
+                <div style={{ fontSize: "11px", color: "var(--mute)", marginBottom: "4px" }}>
+                  아래는 탭과 무관하게 항상 "종합" 기준 최종 반려 사유입니다.
+                </div>
+              )}
               {isView ? (
                 <div
                   className="in"
