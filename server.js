@@ -33,6 +33,22 @@ if (proxyUrl) setGlobalDispatcher(new ProxyAgent(proxyUrl));
 const run = promisify(execFile);
 const app = express();
 
+/* OpenAI 요청 한도(429)는 대개 아주 짧은 시간(수백ms~수초) 안에 풀린다.
+ * 재시도 없이 바로 실패시키면 백그라운드 검수가 "실패"로 확정돼버려서
+ * 잠깐만 기다리면 될 일에 자막 검수 전체를 놓치게 된다. */
+async function fetchOpenAIWithRetry(url, options, { retries = 3, baseDelayMs = 1000 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(url, options);
+    if (r.status !== 429 || attempt >= retries) return r;
+    const retryAfterSec = Number(r.headers.get("retry-after"));
+    const waitMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+      ? retryAfterSec * 1000
+      : baseDelayMs * (attempt + 1);
+    console.warn(`[OpenAI] 429 요청 한도 초과 — ${waitMs}ms 대기 후 재시도 (${attempt + 1}/${retries})`);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+}
+
 const PORT = process.env.PORT || 8787;
 const STT_MODEL = process.env.STT_MODEL || "whisper-1";
 const STT_LANG = process.env.STT_LANG || "ko";
@@ -334,7 +350,7 @@ brandMentioned/productMentioned는 실제로 지정된 브랜드명·제품명�
 {"result":"통과"|"반려","brandMentioned":boolean,"productMentioned":boolean,"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장","occurrences":[{"timestamp":숫자(초),"source":"음성"|"자막","quote":"실제 언급되거나 오탈자가 있었던 문구","type":"brand"|"product"|"usp"|"ban"|"typo","note":"간단 설명(선택, 없으면 빈 문자열)"}]}
 occurrences는 브랜드/제품/USP 언급, 금칙어 위반, 오탈자로 의심되는 부분마다 하나씩 만들어라. 해당 없으면 빈 배열로 답하라.`;
 
-  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+  const r = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -473,7 +489,7 @@ async function verifySuspiciousVision(frames, bans) {
       const prompt = `이 이미지의 자막에서 다음 금칙어 목록 위반 소지가 있는지 검수해라: ${banList}.
 로컬 OCR(Tesseract)이 이 프레임에서 "${f.text}"라고 읽었다. 이게 실제로 금칙어를 포함한 문맥인지, 아니면 OCR의 오인식/오탈자인지 이미지를 직접 보고 판단해라.
 아래 JSON 형식으로만 답하라: {"correctedText":"이미지에서 실제로 보이는 정확한 텍스트","violates":boolean,"matchedBan":"위반한 금칙어 또는 null"}`;
-      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      const r = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
