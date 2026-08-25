@@ -642,7 +642,11 @@ async function verifySuspiciousVision(frames, bans) {
               role: "user",
               content: [
                 { type: "text", text: prompt },
-                { type: "image_url", image_url: { url: f.dataUrl } },
+                // detail:"low"는 이미지 1장당 토큰을 고정 85개로 묶어준다(기본값 auto/high는
+                // 해상도에 비례해 최대 10배 이상 더 쓴다). Tesseract가 이미 후보 텍스트를
+                // 뽑아준 상태에서 이를 확인하는 용도라, 약간의 판독력 저하를 감수하고
+                // 계정 분당 토큰 한도(TPM)를 안 넘기는 쪽을 우선한다.
+                { type: "image_url", image_url: { url: f.dataUrl, detail: "low" } },
               ],
             },
           ],
