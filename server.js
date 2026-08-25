@@ -100,16 +100,19 @@ function createSemaphore(limit) {
 }
 const withCompressionSlot = createSemaphore(Number(process.env.MAX_CONCURRENT_COMPRESSIONS) || 2);
 
-/* 자막 검수는 480p면 충분한데 원본(1080p 이상)을 그대로 crv/Tesseract에 넣으면
+/* 자막 검수는 저해상도면 충분한데 원본(1080p 이상)을 그대로 crv/Tesseract에 넣으면
  * 해상도에 비례해서 CPU 부하가 커진다. 업로드 즉시 저해상도·고속 프리셋으로
  * 압축한 프록시 파일을 만들어, 이후 키프레임 추출은 이 작은 파일로만 진행한다.
- * 오디오는 화질과 무관하니 그대로 복사해서 STT 품질에 영향이 없게 한다. */
+ * 오디오는 화질과 무관하니 그대로 복사해서 STT 품질에 영향이 없게 한다.
+ * 자막은 화면 폭 방향으로 놓이므로, 세로 영상(릴스/쇼츠)에서 높이만 고정해버리면
+ * 폭이 과도하게 줄어 자막을 못 읽는다 — 가로/세로 중 "짧은 변"을 기준으로 고정해
+ * 어느 방향이든 자막이 놓인 폭 방향 해상도가 보존되게 한다. */
 async function compressForOcr(videoPath) {
   const dir = await workdir();
   const out = path.join(dir, "proxy.mp4");
   await run("ffmpeg", [
     "-y", "-i", videoPath,
-    "-vf", "scale=-2:480",
+    "-vf", "scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)'",
     "-preset", "ultrafast",
     "-b:v", "600k",
     "-c:a", "copy",
