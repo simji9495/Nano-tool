@@ -21,6 +21,7 @@ import {
   DeleteObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
+  PutBucketCorsCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createWorker } from "tesseract.js";
@@ -116,6 +117,38 @@ async function verifyR2Connection() {
     console.log(`[R2] "${R2_BUCKET}" 버킷 연결 확인 완료`);
   } catch (e) {
     console.warn(`[R2] 버킷 연결 확인 실패: ${e.message}`);
+  }
+}
+
+/* 브라우저가 프리사인드 URL로 R2에 "직접" PUT을 보내려면 R2 버킷에 CORS 설정이
+ * 있어야 한다(없으면 브라우저가 막는다 — curl은 CORS를 안 지켜서 여기서
+ * 안 걸린다). R2는 대시보드가 아니라 S3 API로만 CORS를 설정할 수 있어서
+ * 서버가 시작할 때마다 원하는 설정으로 맞춰둔다(멱등). */
+async function configureR2Cors() {
+  if (!r2) return;
+  const allowedOrigins = Array.from(
+    new Set([process.env.ALLOW_ORIGIN, "http://localhost:3000"].filter(Boolean)),
+  );
+  try {
+    await r2.send(
+      new PutBucketCorsCommand({
+        Bucket: R2_BUCKET,
+        CORSConfiguration: {
+          CORSRules: [
+            {
+              AllowedOrigins: allowedOrigins,
+              AllowedMethods: ["PUT", "GET"],
+              // R2는 AllowedHeaders에 "*"를 지원하지 않는다 — content-type만 명시해야 한다.
+              AllowedHeaders: ["content-type"],
+              MaxAgeSeconds: 3600,
+            },
+          ],
+        },
+      }),
+    );
+    console.log(`[R2] CORS 설정 완료 (허용 origin: ${allowedOrigins.join(", ")})`);
+  } catch (e) {
+    console.warn(`[R2] CORS 설정 실패: ${e.message}`);
   }
 }
 
@@ -1043,6 +1076,7 @@ app.listen(PORT, async () => {
   console.log(`설치 상태 확인 → http://localhost:${PORT}/api/health`);
 
   await verifyR2Connection();
+  await configureR2Cors();
   cleanupOrphanedUploads();
   setInterval(cleanupOrphanedUploads, ORPHAN_CLEANUP_INTERVAL_MS);
 });
