@@ -918,74 +918,72 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
 
 /* 업로드 경로(멀티파트 직접 업로드 / 스토리지 경유)와 무관하게, 로컬 디스크에
  * 영상 파일이 준비된 이후의 검수 로직은 완전히 동일하다. */
-async function processUploadedVideo({ videoPath, influencerId, campaign, res }) {
-  try {
-    // 음성 전사(Whisper API 호출, 네트워크 대기)와 화면 자막용 저해상도 압축(로컬 CPU)을
-    // 동시에 진행한다 — 압축이 Whisper 응답을 기다리는 시간에 "묻혀서" 거의 공짜가 된다.
-    const [result, proxy] = await Promise.all([
-      transcribe(videoPath),
-      withCompressionSlot(() => compressForOcr(videoPath)).catch((e) => {
-        console.warn(`[다운샘플링] 압축 실패, 원본으로 대체: ${e.message}`);
-        return null;
-      }),
-    ]);
-    const ocrVideoPath = proxy?.path || videoPath;
-    if (proxy) fs.rm(videoPath, { force: true }).catch(() => {}); // 압축 성공했으면 원본은 더 필요 없음
+/* 음성 판정까지만 하고 반환한다(자막은 continueOcrInBackground가 이어서 담당).
+ * 호출부가 res.json으로 바로 응답하든, 백그라운드에서 Supabase만 갱신하든
+ * 선택할 수 있도록 res를 직접 건드리지 않고 결과 객체를 그대로 돌려준다. */
+async function processUploadedVideo({ videoPath, influencerId, campaign }) {
+  // 음성 전사(Whisper API 호출, 네트워크 대기)와 화면 자막용 저해상도 압축(로컬 CPU)을
+  // 동시에 진행한다 — 압축이 Whisper 응답을 기다리는 시간에 "묻혀서" 거의 공짜가 된다.
+  const [result, proxy] = await Promise.all([
+    transcribe(videoPath),
+    withCompressionSlot(() => compressForOcr(videoPath)).catch((e) => {
+      console.warn(`[다운샘플링] 압축 실패, 원본으로 대체: ${e.message}`);
+      return null;
+    }),
+  ]);
+  const ocrVideoPath = proxy?.path || videoPath;
+  if (proxy) fs.rm(videoPath, { force: true }).catch(() => {}); // 압축 성공했으면 원본은 더 필요 없음
 
-    const audioTimestamped = formatTimestampedSegments(result.segments) || result.text;
+  const audioTimestamped = formatTimestampedSegments(result.segments) || result.text;
 
-    let audioReview = null;
-    if (campaign) {
-      try {
-        const audioOnlyText = `[음성 전사]\n${audioTimestamped}\n\n[화면 자막/텍스트]\n(화면 자막 검수 진행 중 — 잠시 후 결과가 갱신됩니다)`;
-        audioReview = await reviewAgainstGuidelines(audioOnlyText, campaign);
-      } catch (e) {
-        audioReview = { error: String(e.message || e) };
-      }
+  let audioReview = null;
+  if (campaign) {
+    try {
+      const audioOnlyText = `[음성 전사]\n${audioTimestamped}\n\n[화면 자막/텍스트]\n(화면 자막 검수 진행 중 — 잠시 후 결과가 갱신됩니다)`;
+      audioReview = await reviewAgainstGuidelines(audioOnlyText, campaign);
+    } catch (e) {
+      audioReview = { error: String(e.message || e) };
     }
-
-    const canContinue = Boolean(campaign && !audioReview?.error && influencerId);
-    // 종합/음성 탭을 나눠 보여줄 수 있게, 1단계에서는 음성 판정을 audio로 담아둔다.
-    // 자막(caption)은 2단계가 끝나야 나오므로 아직 null.
-    const review = audioReview?.error
-      ? audioReview
-      : audioReview
-        ? { ...audioReview, audio: audioReview, caption: null }
-        : null;
-
-    if (supabase && influencerId) {
-      await supabase
-        .from("reelcheck_influencers")
-        .update({
-          status: canContinue ? "검수완료(음성)" : "검수완료",
-          result: review?.result || "-",
-          feedback: review?.feedback || "",
-          transcript: result.text,
-          review,
-        })
-        .eq("id", influencerId)
-        .then(() => {}, () => {});
-    }
-
-    res.json({ ...result, ocrPending: canContinue, review });
-
-    if (canContinue) {
-      continueOcrInBackground({
-        videoPath: ocrVideoPath,
-        influencerId,
-        campaign,
-        audioText: audioTimestamped,
-        audioReview,
-      }).catch((e) => {
-        console.error("[백그라운드] 화면 자막 검수 실패:", e);
-      });
-    } else {
-      fs.rm(ocrVideoPath, { force: true }).catch(() => {});
-    }
-  } catch (e) {
-    fail(res, e);
-    fs.rm(videoPath, { force: true }).catch(() => {});
   }
+
+  const canContinue = Boolean(campaign && !audioReview?.error && influencerId);
+  // 종합/음성 탭을 나눠 보여줄 수 있게, 1단계에서는 음성 판정을 audio로 담아둔다.
+  // 자막(caption)은 2단계가 끝나야 나오므로 아직 null.
+  const review = audioReview?.error
+    ? audioReview
+    : audioReview
+      ? { ...audioReview, audio: audioReview, caption: null }
+      : null;
+
+  if (supabase && influencerId) {
+    await supabase
+      .from("reelcheck_influencers")
+      .update({
+        status: canContinue ? "검수완료(음성)" : "검수완료",
+        result: review?.result || "-",
+        feedback: review?.feedback || "",
+        transcript: result.text,
+        review,
+      })
+      .eq("id", influencerId)
+      .then(() => {}, () => {});
+  }
+
+  if (canContinue) {
+    continueOcrInBackground({
+      videoPath: ocrVideoPath,
+      influencerId,
+      campaign,
+      audioText: audioTimestamped,
+      audioReview,
+    }).catch((e) => {
+      console.error("[백그라운드] 화면 자막 검수 실패:", e);
+    });
+  } else {
+    fs.rm(ocrVideoPath, { force: true }).catch(() => {});
+  }
+
+  return { ...result, ocrPending: canContinue, review };
 }
 
 app.post("/api/transcribe", upload.single("video"), async (req, res) => {
@@ -998,11 +996,16 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
   } catch {
     /* 잘못된 캠페인 JSON은 무시하고 음성 전사만 진행 */
   }
-  await processUploadedVideo({ videoPath, influencerId, campaign, res });
+  try {
+    res.json(await processUploadedVideo({ videoPath, influencerId, campaign }));
+  } catch (e) {
+    fail(res, e);
+    fs.rm(videoPath, { force: true }).catch(() => {});
+  }
 });
 
-/* 대용량 영상용 경로: 브라우저가 이미 Supabase Storage에 직접 업로드를 끝낸
- * 뒤, 어디에 올렸는지(storagePath)만 알려주면 서버가 받아와서 검수를 시작한다. */
+/* 대용량 영상용 경로: 브라우저가 이미 스토리지에 직접 업로드를 끝낸 뒤,
+ * 어디에 올렸는지(storagePath)만 알려주면 서버가 받아와서 검수를 시작한다. */
 app.post("/api/uploads/presign", requireR2, async (req, res) => {
   const influencerId = req.body?.influencerId || "misc";
   const filename = String(req.body?.filename || "video").replace(/[^\w.-]+/g, "_");
@@ -1016,27 +1019,45 @@ app.post("/api/uploads/presign", requireR2, async (req, res) => {
   }
 });
 
+/* 스토리지에서 파일을 내려받아 검수를 시작하는 것 자체가 대용량 영상 기준으로
+ * 꽤 걸릴 수 있다(다운로드 + 전사 + 압축). 이 요청을 동기로 끝까지 붙잡고
+ * 있으면, 업로드 전송 시간을 피하려고 만든 구조인데 이번엔 "응답 생성 시간"
+ * 쪽에서 Render의 요청 처리 한도에 다시 걸릴 수 있다. 그래서 요청을 받으면
+ * 바로 응답부터 하고, 실제 다운로드·검수는 백그라운드로 넘긴다 — 프론트는
+ * 자막 검수와 동일하게 폴링으로 결과를 받는다. */
 app.post("/api/transcribe/from-storage", requireR2, async (req, res) => {
   const { storagePath, influencerId, campaign } = req.body || {};
   if (!storagePath) return res.status(400).json({ error: "storagePath가 필요합니다." });
 
-  const dir = await workdir();
-  const videoPath = path.join(dir, `source${path.extname(storagePath) || ".mp4"}`);
-  try {
-    const { Body } = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: storagePath }));
-    await pipeline(Body, createWriteStream(videoPath));
-    // 로컬로 잘 받았으니 R2엔 더 필요 없다 — 바로 정리한다.
-    r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: storagePath })).catch(() => {});
-  } catch (e) {
-    return fail(res, new Error(`스토리지에서 파일을 받지 못했습니다: ${e.message}`));
-  }
+  res.json({ started: true });
 
-  await processUploadedVideo({
-    videoPath,
-    influencerId: influencerId || null,
-    campaign: campaign || null,
-    res,
-  });
+  try {
+    const dir = await workdir();
+    const videoPath = path.join(dir, `source${path.extname(storagePath) || ".mp4"}`);
+    try {
+      const { Body } = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: storagePath }));
+      await pipeline(Body, createWriteStream(videoPath));
+      // 로컬로 잘 받았으니 R2엔 더 필요 없다 — 바로 정리한다.
+      r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: storagePath })).catch(() => {});
+    } catch (e) {
+      throw new Error(`스토리지에서 파일을 받지 못했습니다: ${e.message}`);
+    }
+
+    await processUploadedVideo({
+      videoPath,
+      influencerId: influencerId || null,
+      campaign: campaign || null,
+    });
+  } catch (e) {
+    console.error("[스토리지 경유 검수] 실패:", e);
+    if (supabase && influencerId) {
+      await supabase
+        .from("reelcheck_influencers")
+        .update({ status: "검수완료", result: "-", feedback: `검수 요청 실패: ${e.message}` })
+        .eq("id", influencerId)
+        .then(() => {}, () => {});
+    }
+  }
 });
 
 app.post("/api/frames", upload.single("video"), async (req, res) => {

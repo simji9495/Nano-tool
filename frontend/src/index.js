@@ -368,12 +368,32 @@ function App() {
                       status: "검수완료",
                       result: row.result,
                       feedback: row.feedback,
+                      transcript: row.transcript,
                       review: row.review,
                     }
                   : inf,
               ),
             );
             return; // 최종 결과 도착, 폴링 종료
+          }
+          // 아직 최종 결과는 아니지만, 음성 판정(1단계)이 먼저 나왔으면 그 사이에도
+          // 화면에 미리 보여준다 — 업로드부터 여기까지 전부 백그라운드라 이게 없으면
+          // 자막 검수가 끝날 때까지 "검수 중..."만 보인다.
+          if (row.status?.includes("(음성)")) {
+            setInfluencers((prev) =>
+              prev.map((inf) =>
+                inf.id === id && inf.status !== row.status
+                  ? {
+                      ...inf,
+                      status: row.status,
+                      result: row.result,
+                      feedback: row.feedback,
+                      transcript: row.transcript,
+                      review: row.review,
+                    }
+                  : inf,
+              ),
+            );
           }
         }
       } catch {
@@ -435,39 +455,10 @@ function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "검수 요청이 실패했습니다.");
 
-      const review = data.review;
-      setInfluencers((prev) =>
-        prev.map((inf) => {
-          if (inf.id !== id) return inf;
-          if (review?.error) {
-            return {
-              ...inf,
-              status: "검수실패",
-              result: "-",
-              feedback: `가이드라인 검수 실패: ${review.error}`,
-            };
-          }
-          if (!review) {
-            return {
-              ...inf,
-              status: "전사완료",
-              result: "-",
-              feedback: "가이드라인이 없어 판정을 건너뛰었습니다.",
-            };
-          }
-          return {
-            ...inf,
-            // 화면 자막 검수가 백그라운드에서 진행 중이면 음성 기준 임시 결과로 표시
-            status: data.ocrPending ? "검수완료(음성)" : "검수완료",
-            result: review.result,
-            feedback: review.feedback,
-            transcript: data.text,
-            review,
-          };
-        }),
-      );
-
-      if (data.ocrPending) pollForFinalReview(id);
+      // 다운로드·전사·검수는 전부 서버에서 백그라운드로 진행된다(대용량 영상
+      // 기준으로 이 자체도 오래 걸릴 수 있어 응답을 기다리지 않음) — 음성 판정이
+      // 나오는 시점부터 폴링이 알아서 화면을 갱신한다.
+      pollForFinalReview(id);
     } catch (err) {
       setInfluencers((prev) =>
         prev.map((inf) =>
