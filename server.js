@@ -64,6 +64,9 @@ async function fetchOpenAIWithRetry(url, options, { retries = 3, baseDelayMs = 1
 const PORT = process.env.PORT || 8787;
 const STT_MODEL = process.env.STT_MODEL || "whisper-1";
 const STT_LANG = process.env.STT_LANG || "ko";
+// 브라우저의 Origin 헤더는 절대 끝에 "/"가 붙지 않는다. 배포 URL을 복사해
+// 붙여넣을 때 슬래시가 딸려오는 실수가 흔해서, CORS 비교 전에 미리 제거한다.
+const ALLOW_ORIGIN = (process.env.ALLOW_ORIGIN || "*").replace(/\/+$/, "");
 const CRV_BIN = process.env.CRV_BIN || "crv";
 const MAX_UPLOAD_MB = 500;
 const CHUNK_LIMIT = 24 * 1024 * 1024; // OpenAI 업로드 한도 25MB보다 살짝 아래
@@ -126,9 +129,7 @@ async function verifyR2Connection() {
  * 서버가 시작할 때마다 원하는 설정으로 맞춰둔다(멱등). */
 async function configureR2Cors() {
   if (!r2) return;
-  const allowedOrigins = Array.from(
-    new Set([process.env.ALLOW_ORIGIN, "http://localhost:3000"].filter(Boolean)),
-  );
+  const allowedOrigins = Array.from(new Set([ALLOW_ORIGIN, "http://localhost:3000"]));
   try {
     await r2.send(
       new PutBucketCorsCommand({
@@ -177,7 +178,7 @@ async function cleanupOrphanedUploads() {
   }
 }
 
-app.use(cors({ origin: process.env.ALLOW_ORIGIN || "*" }));
+app.use(cors({ origin: ALLOW_ORIGIN }));
 app.use(express.json());
 const upload = multer({
   dest: path.join(os.tmpdir(), "reelcheck-up"),
