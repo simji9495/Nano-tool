@@ -868,21 +868,21 @@ function App() {
                     <td>
                       <span
                         className={`st ${inf.result === "통과" ? "pass" : inf.result === "-" ? "none" : "block"}`}
-                        role={inf.result === "반려" ? "button" : undefined}
-                        tabIndex={inf.result === "반려" ? 0 : undefined}
-                        title={inf.result === "반려" ? "반려 사유 보기" : undefined}
+                        role={inf.result !== "-" ? "button" : undefined}
+                        tabIndex={inf.result !== "-" ? 0 : undefined}
+                        title={inf.result !== "-" ? "검수 사유 보기" : undefined}
                         style={
-                          inf.result === "반려"
+                          inf.result !== "-"
                             ? { cursor: "pointer" }
                             : undefined
                         }
                         onClick={() => {
-                          if (inf.result !== "반려") return;
+                          if (inf.result === "-") return;
                           setFeedbackMode("view");
                           setSelectedInf(inf);
                         }}
                         onKeyDown={(e) => {
-                          if (inf.result !== "반려") return;
+                          if (inf.result === "-") return;
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             setFeedbackMode("view");
@@ -974,7 +974,7 @@ function App() {
             >
               <h3>
                 {isView
-                  ? `${modalInf.name} 반려 사유`
+                  ? `${modalInf.name} ${modalInf.result === "통과" ? "통과" : "반려"} 사유`
                   : `${modalInf.name} 피드백 작성`}
               </h3>
               {modalInf.status?.includes("(음성)") && (
@@ -1112,12 +1112,10 @@ function App() {
                   )}
                 </>
               )}
-              {isView && hasSplitReview && (
-                <div style={{ fontSize: "11px", color: "var(--mute)", marginBottom: "4px" }}>
-                  아래는 탭과 무관하게 항상 "종합" 기준 최종 반려 사유입니다.
-                </div>
-              )}
-              {isView ? (
+              {/* 탭이 있으면(종합/음성/자막) 각 탭 안에 이미 그 탭 기준 피드백이
+                  나와있어서, 여기서 또 종합 기준 피드백을 고정으로 보여주면
+                  탭 내용과 달라 보여 혼란스럽다 — 탭이 있을 때는 생략한다. */}
+              {isView && !hasSplitReview && (
                 <div
                   className="in"
                   style={{
@@ -1130,7 +1128,8 @@ function App() {
                 >
                   {modalInf.feedback || "등록된 반려 사유가 없습니다."}
                 </div>
-              ) : (
+              )}
+              {!isView && (
                 <textarea
                   className="in"
                   style={{ height: "80px", marginBottom: "12px" }}
