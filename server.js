@@ -315,6 +315,12 @@ async function reviewAgainstGuidelines(text, campaign) {
 "[음성 전사]" 구간에서 나온 내용은 출처를 "음성"으로, "[화면 자막/텍스트]" 구간에서 나온 내용은 출처를 "자막"으로 표시하라.
 아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라.
 
+brandMentioned/productMentioned는 실제로 지정된 브랜드명·제품명과 (표기가 살짝
+다르더라도) 명확히 같은 대상을 가리킬 때만 true로 판단하라. 음성 전사는 STT
+오인식으로 다른 단어로 잘못 인식되는 경우가 흔하다 — 문맥상 브랜드/제품과
+무관해 보이는 단어("이 제품", "그거", 오인식된 엉뚱한 단어 등)는 실제 언급으로
+인정하지 말고, 그런 부분을 발견하면 occurrences에 type "typo"로 남겨라.
+
 [캠페인 가이드라인]
 - 정확한 브랜드명: ${guideline.brand || "(미지정)"}
 - 정확한 제품명: ${guideline.product || "(미지정)"}
@@ -689,9 +695,15 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
   const finalizeAsAudioOnly = async (reason) => {
     console.warn(`[백그라운드] 화면 자막 검수 중단 (${reason}) — 음성 기준 결과로 확정합니다.`);
     if (supabase && influencerId) {
+      const patch = { status: "검수완료" };
+      // caption을 null로 남겨두면 프론트가 "아직 진행 중"으로 오인한다 — 이미
+      // 최종 상태(검수완료)로 확정되는 것이므로, 실패했다는 사실 자체를 명시한다.
+      if (audioReview && !audioReview.error) {
+        patch.review = { ...audioReview, audio: audioReview, caption: { failed: true, reason } };
+      }
       await supabase
         .from("reelcheck_influencers")
-        .update({ status: "검수완료" })
+        .update(patch)
         .eq("id", influencerId)
         .then(() => {}, () => {});
     }

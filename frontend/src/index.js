@@ -970,7 +970,7 @@ function App() {
                       ))}
                     </div>
                   )}
-                  {!activeReview ? (
+                  {!activeReview || activeReview.failed ? (
                     <div
                       style={{
                         fontSize: "12px",
@@ -982,9 +982,11 @@ function App() {
                         marginBottom: "12px",
                       }}
                     >
-                      {reviewTab === "caption"
-                        ? "화면 자막 검수가 아직 진행 중입니다."
-                        : "표시할 결과가 없습니다."}
+                      {activeReview?.failed
+                        ? "화면 자막 검수에 실패해 음성 기준으로만 최종 판정되었습니다."
+                        : reviewTab === "caption"
+                          ? "화면 자막 검수가 아직 진행 중입니다."
+                          : "표시할 결과가 없습니다."}
                     </div>
                   ) : (
                     <div
