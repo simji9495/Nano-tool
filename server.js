@@ -576,14 +576,34 @@ function fuzzyContains(text, phrase, maxRatio = 0.3) {
   return false;
 }
 
-/* 1차 필터: 금칙어 의심 단어가 걸렸거나, Tesseract 신뢰도가 낮아 오인식이 의심되는 프레임만 골라낸다. */
+/* 1차 필터: 금칙어 의심 단어가 걸렸거나, Tesseract 신뢰도가 낮아 오인식이 의심되는
+ * 프레임을 골라낸다. 금칙어 의심은 실제 위반 신호라 전부 검증하지만, 단순 저신뢰
+ * (영상 자체가 인식하기 어려워서 그런 경우가 대부분)는 상위 몇 개로만 제한한다 —
+ * 안 그러면 프레임 대부분이 여기 걸리는 영상에서 GPT-4o Vision 호출이 한꺼번에
+ * 몰려 계정 분당 토큰 한도(TPM)를 넘어버리고, 그러면 동시 호출 수를 줄이거나
+ * 재시도를 늘려도 소용이 없다(전체 요청량 자체가 한도를 넘기 때문). */
+const MAX_LOW_CONFIDENCE_VERIFY = 15;
+
 function findSuspiciousFrames(zipped, bans) {
   const cleanBans = (bans || []).filter(Boolean);
-  return zipped.filter((r) => {
-    if (!r.text) return false;
-    if (r.confidence < 60) return true; // 글자는 있는데 잘 못 읽었을 가능성
-    return cleanBans.some((b) => fuzzyContains(r.text, b));
-  });
+  const banMatches = [];
+  const lowConfidence = [];
+  for (const r of zipped) {
+    if (!r.text) continue;
+    if (cleanBans.some((b) => fuzzyContains(r.text, b))) {
+      banMatches.push(r);
+    } else if (r.confidence < 60) {
+      lowConfidence.push(r);
+    }
+  }
+  lowConfidence.sort((a, b) => a.confidence - b.confidence);
+  const capped = lowConfidence.slice(0, MAX_LOW_CONFIDENCE_VERIFY);
+  if (lowConfidence.length > capped.length) {
+    console.warn(
+      `[자막 검수] 저신뢰 프레임 ${lowConfidence.length}개 중 ${capped.length}개만 정밀검증 (나머지는 건너뜀)`,
+    );
+  }
+  return [...banMatches, ...capped];
 }
 
 /* 2차 정밀검증: 의심 프레임만 GPT-4o 비전으로 보내 오탈자/오인식인지 실제 위반인지 판정한다. */
