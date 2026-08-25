@@ -214,6 +214,15 @@ async function transcribe(videoPath) {
   }
 }
 
+/* 자막(OCR) 요약과 같은 [12.3s] 문구 형식으로 맞춰야 검수 LLM이 음성/자막
+ * 어느 쪽에서 나온 언급인지, 몇 초 지점인지를 정확히 인용할 수 있다. */
+function formatTimestampedSegments(segments) {
+  return (segments || [])
+    .filter((s) => s.text)
+    .map((s) => `[${s.start}s] ${s.text}`)
+    .join("\n");
+}
+
 /* ───────────── 2. 장면 단위 키프레임 (crv) ───────────── */
 
 /* crv 버전에 따라 프레임 시각을 알아내는 방법이 달라서 3단계로 시도한다. */
@@ -302,7 +311,9 @@ async function reviewAgainstGuidelines(text, campaign) {
     bans: Array.isArray(campaign?.bans) ? campaign.bans.filter(Boolean) : [],
   };
 
-  const prompt = `다음은 인플루언서 광고 영상에서 추출한 음성 전사 및 화면 자막(OCR) 텍스트다. 아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라.
+  const prompt = `다음은 인플루언서 광고 영상에서 추출한 텍스트다. 대괄호 [숫자s]는 영상 내 등장 시각(초)이다.
+"[음성 전사]" 구간에서 나온 내용은 출처를 "음성"으로, "[화면 자막/텍스트]" 구간에서 나온 내용은 출처를 "자막"으로 표시하라.
+아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라.
 
 [캠페인 가이드라인]
 - 정확한 브랜드명: ${guideline.brand || "(미지정)"}
@@ -310,11 +321,12 @@ async function reviewAgainstGuidelines(text, campaign) {
 - 필수 포함 USP: ${guideline.usps.join(", ") || "(없음)"}
 - 금칙어/금기사항: ${guideline.bans.join(", ") || "(없음)"}
 
-[발화 텍스트]
+[텍스트]
 """${text}"""
 
 아래 JSON 형식으로만 답하라:
-{"result":"통과"|"반려","brandMentioned":boolean,"productMentioned":boolean,"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장"}`;
+{"result":"통과"|"반려","brandMentioned":boolean,"productMentioned":boolean,"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장","occurrences":[{"timestamp":숫자(초),"source":"음성"|"자막","quote":"실제 언급되거나 오탈자가 있었던 문구","type":"brand"|"product"|"usp"|"ban"|"typo","note":"간단 설명(선택, 없으면 빈 문자열)"}]}
+occurrences는 브랜드/제품/USP 언급, 금칙어 위반, 오탈자로 의심되는 부분마다 하나씩 만들어라. 해당 없으면 빈 배열로 답하라.`;
 
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -346,6 +358,15 @@ async function reviewAgainstGuidelines(text, campaign) {
     missingUsps: Array.isArray(parsed.missingUsps) ? parsed.missingUsps : [],
     violatedBans: Array.isArray(parsed.violatedBans) ? parsed.violatedBans : [],
     feedback: String(parsed.feedback || ""),
+    occurrences: Array.isArray(parsed.occurrences)
+      ? parsed.occurrences.map((o) => ({
+          timestamp: Number(o?.timestamp) || 0,
+          source: o?.source === "자막" ? "자막" : "음성",
+          quote: String(o?.quote || ""),
+          type: String(o?.type || ""),
+          note: String(o?.note || ""),
+        }))
+      : [],
   };
 }
 
@@ -657,7 +678,7 @@ app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
  * 그래서 음성 검수 결과는 즉시 응답하고, 화면 자막 검수는 응답 이후 백그라운드에서
  * 계속 진행해 끝나면 Supabase의 해당 인플루언서 행을 갱신한다.
  */
-async function continueOcrInBackground({ videoPath, influencerId, campaign, audioText }) {
+async function continueOcrInBackground({ videoPath, influencerId, campaign, audioText, audioReview }) {
   const t0 = Date.now();
   const timings = {};
 
@@ -705,10 +726,28 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
     timings.visionVerifyMs = Date.now() - t2;
 
     const ocrSummary = buildOcrSummary(zipped, verifications);
-    const combinedText = `[음성 전사]\n${audioText}\n\n[화면 자막/텍스트 (OCR: Tesseract${verifications.length ? " + GPT-4o 검증" : ""})]\n${ocrSummary || "(감지된 텍스트 없음)"}`;
+    const captionText = ocrSummary || "(감지된 텍스트 없음)";
+    const combinedText = `[음성 전사]\n${audioText}\n\n[화면 자막/텍스트 (OCR: Tesseract${verifications.length ? " + GPT-4o 검증" : ""})]\n${captionText}`;
 
     const t3 = Date.now();
-    const review = await reviewAgainstGuidelines(combinedText, campaign);
+    // 종합 판정(음성+자막)과 자막 단독 판정을 동시에 구해서, 마케터가 팝업에서
+    // "종합/음성/자막" 탭으로 나눠 볼 수 있게 한다. 음성 단독 판정은 1단계에서
+    // 이미 계산해둔 것을 그대로 쓴다(중복 호출 방지).
+    const [combinedReview, captionReview] = await Promise.all([
+      reviewAgainstGuidelines(combinedText, campaign),
+      ocrSummary
+        ? reviewAgainstGuidelines(`[화면 자막/텍스트]\n${captionText}`, campaign)
+        : Promise.resolve({
+            result: "반려",
+            brandMentioned: false,
+            productMentioned: false,
+            matchedUsps: [],
+            missingUsps: campaign.usps || [],
+            violatedBans: [],
+            feedback: "화면에서 인식된 자막이 없습니다.",
+            occurrences: [],
+          }),
+    ]);
     timings.finalReviewMs = Date.now() - t3;
     timings.totalMs = Date.now() - t0;
 
@@ -719,11 +758,16 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
         .from("reelcheck_influencers")
         .update({
           status: "검수완료",
-          result: review.result,
-          feedback: review.feedback,
+          result: combinedReview.result,
+          feedback: combinedReview.feedback,
           transcript: audioText,
           // _timingsMs는 병목 진단용 임시 디버그 필드 (프론트엔드는 사용하지 않음)
-          review: { ...review, _timingsMs: timings },
+          review: {
+            ...combinedReview,
+            audio: audioReview || null,
+            caption: captionReview,
+            _timingsMs: timings,
+          },
         })
         .eq("id", influencerId);
     }
@@ -759,17 +803,26 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
     const ocrVideoPath = proxy?.path || videoPath;
     if (proxy) fs.rm(videoPath, { force: true }).catch(() => {}); // 압축 성공했으면 원본은 더 필요 없음
 
-    let review = null;
+    const audioTimestamped = formatTimestampedSegments(result.segments) || result.text;
+
+    let audioReview = null;
     if (campaign) {
       try {
-        const audioOnlyText = `[음성 전사]\n${result.text}\n\n[화면 자막/텍스트 (OCR)]\n(화면 자막 검수 진행 중 — 잠시 후 결과가 갱신됩니다)`;
-        review = await reviewAgainstGuidelines(audioOnlyText, campaign);
+        const audioOnlyText = `[음성 전사]\n${audioTimestamped}\n\n[화면 자막/텍스트]\n(화면 자막 검수 진행 중 — 잠시 후 결과가 갱신됩니다)`;
+        audioReview = await reviewAgainstGuidelines(audioOnlyText, campaign);
       } catch (e) {
-        review = { error: String(e.message || e) };
+        audioReview = { error: String(e.message || e) };
       }
     }
 
-    const canContinue = Boolean(campaign && !review?.error && influencerId);
+    const canContinue = Boolean(campaign && !audioReview?.error && influencerId);
+    // 종합/음성 탭을 나눠 보여줄 수 있게, 1단계에서는 음성 판정을 audio로 담아둔다.
+    // 자막(caption)은 2단계가 끝나야 나오므로 아직 null.
+    const review = audioReview?.error
+      ? audioReview
+      : audioReview
+        ? { ...audioReview, audio: audioReview, caption: null }
+        : null;
 
     if (supabase && influencerId) {
       await supabase
@@ -779,6 +832,7 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
           result: review?.result || "-",
           feedback: review?.feedback || "",
           transcript: result.text,
+          review,
         })
         .eq("id", influencerId)
         .then(() => {}, () => {});
@@ -787,7 +841,13 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
     res.json({ ...result, ocrPending: canContinue, review });
 
     if (canContinue) {
-      continueOcrInBackground({ videoPath: ocrVideoPath, influencerId, campaign, audioText: result.text }).catch((e) => {
+      continueOcrInBackground({
+        videoPath: ocrVideoPath,
+        influencerId,
+        campaign,
+        audioText: audioTimestamped,
+        audioReview,
+      }).catch((e) => {
         console.error("[백그라운드] 화면 자막 검수 실패:", e);
       });
     } else {

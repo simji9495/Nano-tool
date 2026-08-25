@@ -28,6 +28,21 @@ function loadLocal() {
   }
 }
 
+function formatTimestamp(sec) {
+  const s = Math.max(0, Math.round(Number(sec) || 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+}
+
+const OCCURRENCE_TYPE_LABEL = {
+  brand: "브랜드",
+  product: "제품",
+  usp: "USP",
+  ban: "금칙어",
+  typo: "오타",
+};
+
 function parseYearMonth(dateStr) {
   const m = String(dateStr || "").match(/^(\d{4})-(\d{2})/);
   if (!m) return { year: "", month: "" };
@@ -65,6 +80,7 @@ function App() {
   const [selectedInf, setSelectedInf] = useState(null);
   const [feedbackMode, setFeedbackMode] = useState("edit");
   const [feedbackText, setFeedbackText] = useState("");
+  const [reviewTab, setReviewTab] = useState("combined");
 
   const selectedCampaign =
     campaigns.find((c) => c.id === selectedCampaignId) || null;
@@ -139,6 +155,11 @@ function App() {
       cancelled = true;
     };
   }, []);
+
+  // 검수 결과 팝업을 새로 열 때마다 "종합" 탭으로 되돌린다.
+  useEffect(() => {
+    setReviewTab("combined");
+  }, [selectedInf?.id]);
 
   // 📋 가이드라인 저장 — 백엔드 캠페인 행에 실제로 반영해야 새로고침/다른 기기에서도 유지된다.
   const saveGuidelines = async () => {
@@ -872,6 +893,24 @@ function App() {
           const modalInf =
             influencers.find((i) => i.id === selectedInf.id) || selectedInf;
           const isView = feedbackMode === "view";
+          const rootReview =
+            modalInf.review && !modalInf.review.error ? modalInf.review : null;
+          // 이전 버전(음성/자막 분리 전)에 저장된 검수 결과는 audio/caption 필드가
+          // 아예 없다 — 그런 경우엔 탭을 감추고 예전처럼 종합 결과만 보여준다.
+          const hasSplitReview =
+            rootReview && ("audio" in rootReview || "caption" in rootReview);
+          const TABS = [
+            { key: "combined", label: "종합" },
+            { key: "audio", label: "🎤 음성" },
+            { key: "caption", label: "🖼 자막" },
+          ];
+          const activeReview = !rootReview
+            ? null
+            : reviewTab === "audio"
+              ? rootReview.audio
+              : reviewTab === "caption"
+                ? rootReview.caption
+                : rootReview;
           return (
           <div
             style={{
@@ -890,7 +929,12 @@ function App() {
           >
             <div
               className="card"
-              style={{ width: "400px", padding: "20px" }}
+              style={{
+                width: "480px",
+                maxHeight: "85vh",
+                overflowY: "auto",
+                padding: "20px",
+              }}
               onClick={(e) => e.stopPropagation()}
             >
               <h3>
@@ -904,41 +948,132 @@ function App() {
                   화면 자막 검수가 아직 진행 중입니다. 결과가 업데이트되면 자동으로 반영됩니다.
                 </div>
               )}
-              {modalInf.review && !modalInf.review.error && (
-                <div
-                  style={{
-                    fontSize: "12px",
-                    background: "#F7F9F5",
-                    border: "1px solid var(--line)",
-                    borderRadius: "4px",
-                    padding: "10px",
-                    marginBottom: "12px",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  <div>
-                    브랜드 언급:{" "}
-                    {modalInf.review.brandMentioned ? "✅" : "❌"}
-                    {"  "}/ 제품명 언급:{" "}
-                    {modalInf.review.productMentioned ? "✅" : "❌"}
-                  </div>
-                  {modalInf.review.matchedUsps?.length > 0 && (
-                    <div>
-                      ✅ 충족 USP: {modalInf.review.matchedUsps.join(", ")}
+              {rootReview && (
+                <>
+                  {hasSplitReview && (
+                    <div style={{ display: "flex", gap: "4px", marginBottom: "8px" }}>
+                      {TABS.map((t) => (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => setReviewTab(t.key)}
+                          className="btn sm"
+                          style={{
+                            flex: 1,
+                            background: reviewTab === t.key ? "var(--stamp)" : "#FFF",
+                            color: reviewTab === t.key ? "#FFF" : "var(--graphite)",
+                            border: "1px solid var(--line)",
+                          }}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
                     </div>
                   )}
-                  {modalInf.review.missingUsps?.length > 0 && (
-                    <div style={{ color: "var(--block)" }}>
-                      ⚠️ 누락 USP: {modalInf.review.missingUsps.join(", ")}
+                  {!activeReview ? (
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        color: "var(--mute)",
+                        background: "#F7F9F5",
+                        border: "1px solid var(--line)",
+                        borderRadius: "4px",
+                        padding: "10px",
+                        marginBottom: "12px",
+                      }}
+                    >
+                      {reviewTab === "caption"
+                        ? "화면 자막 검수가 아직 진행 중입니다."
+                        : "표시할 결과가 없습니다."}
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        background: "#F7F9F5",
+                        border: "1px solid var(--line)",
+                        borderRadius: "4px",
+                        padding: "10px",
+                        marginBottom: "12px",
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      <div>
+                        브랜드 언급:{" "}
+                        {activeReview.brandMentioned ? "✅" : "❌"}
+                        {"  "}/ 제품명 언급:{" "}
+                        {activeReview.productMentioned ? "✅" : "❌"}
+                      </div>
+                      {activeReview.matchedUsps?.length > 0 && (
+                        <div>
+                          ✅ 충족 USP: {activeReview.matchedUsps.join(", ")}
+                        </div>
+                      )}
+                      {activeReview.missingUsps?.length > 0 && (
+                        <div style={{ color: "var(--block)" }}>
+                          ⚠️ 누락 USP: {activeReview.missingUsps.join(", ")}
+                        </div>
+                      )}
+                      {activeReview.violatedBans?.length > 0 && (
+                        <div style={{ color: "var(--block)" }}>
+                          🚫 위반 금칙어:{" "}
+                          {activeReview.violatedBans.join(", ")}
+                        </div>
+                      )}
+                      {activeReview.feedback && (
+                        <div style={{ marginTop: "6px" }}>{activeReview.feedback}</div>
+                      )}
+                      {activeReview.occurrences?.length > 0 && (
+                        <div style={{ marginTop: "10px" }}>
+                          <div style={{ fontWeight: 600, marginBottom: "4px" }}>
+                            세부 발견 내역
+                          </div>
+                          <table
+                            style={{
+                              width: "100%",
+                              borderCollapse: "collapse",
+                              fontSize: "11px",
+                            }}
+                          >
+                            <thead>
+                              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
+                                <th style={{ padding: "4px 6px" }}>시간</th>
+                                {reviewTab === "combined" && (
+                                  <th style={{ padding: "4px 6px" }}>출처</th>
+                                )}
+                                <th style={{ padding: "4px 6px" }}>내용</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {activeReview.occurrences.map((o, idx) => (
+                                <tr key={idx} style={{ borderBottom: "1px solid var(--line)" }}>
+                                  <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
+                                    {formatTimestamp(o.timestamp)}
+                                  </td>
+                                  {reviewTab === "combined" && (
+                                    <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
+                                      {o.source === "자막" ? "🖼 자막" : "🎤 음성"}
+                                    </td>
+                                  )}
+                                  <td style={{ padding: "4px 6px" }}>
+                                    "{o.quote}"
+                                    {o.type && (
+                                      <span style={{ color: "var(--mute)" }}>
+                                        {" "}
+                                        ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
+                                        {o.note ? ` · ${o.note}` : ""})
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
                   )}
-                  {modalInf.review.violatedBans?.length > 0 && (
-                    <div style={{ color: "var(--block)" }}>
-                      🚫 위반 금칙어:{" "}
-                      {modalInf.review.violatedBans.join(", ")}
-                    </div>
-                  )}
-                </div>
+                </>
               )}
               {isView ? (
                 <div
