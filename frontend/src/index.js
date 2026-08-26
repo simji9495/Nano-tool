@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import * as XLSX from "xlsx";
 import CampaignSettings from "./CampaignSettings";
@@ -74,6 +74,37 @@ function submissionStatusLabel(inf) {
   return inf.status;
 }
 
+// "업로드 중... N%" 상태는 텍스트 대신 시각적 진행률 바로 보여준다. 그 외
+// 상태는 기존처럼 라벨 텍스트(+ 자막 검수 중 표시)로 보여준다.
+function StatusCell({ inf }) {
+  const m = inf.status?.match(/^업로드 중\.\.\. (\d+)%$/);
+  if (m) {
+    const pct = Number(m[1]);
+    return (
+      <div style={{ minWidth: "120px" }}>
+        <div className="upload-row">
+          <span>업로드 중</span>
+          <span className="pct">{pct}%</span>
+        </div>
+        <div className="upload-track">
+          <div className="upload-fill" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <>
+      {submissionStatusLabel(inf)}
+      {inf.status?.includes("(음성)") && (
+        <div className="ocr-pending">
+          <span className="dot" />
+          화면 자막 확인 중
+        </div>
+      )}
+    </>
+  );
+}
+
 const OCCURRENCE_TYPE_LABEL = {
   brand: "브랜드",
   product: "제품",
@@ -110,6 +141,9 @@ function mapApiCampaign(row, localInfluencers = []) {
 
 function App() {
   const local = loadLocal();
+  // 접속하면 먼저 "제일기획/MCN·에이전시" 중 하나를 고르는 홈 화면을 보여준다.
+  // 로고를 누르면 언제든 이 화면으로 돌아온다.
+  const [screen, setScreen] = useState("home");
   const [role, setRole] = useState("marketer");
   const [tab, setTab] = useState("campaign");
   const [guideOpen, setGuideOpen] = useState(false);
@@ -121,6 +155,16 @@ function App() {
   const [feedbackMode, setFeedbackMode] = useState("edit");
   const [feedbackText, setFeedbackText] = useState("");
   const [reviewTab, setReviewTab] = useState("combined");
+  const [toast, setToast] = useState(null); // { type: "success"|"error"|"info", title, desc }
+  const toastTimerRef = useRef(null);
+
+  // 브라우저 기본 alert() 대신 쓰는 커스텀 알림. 4초 후 자동으로 사라지고,
+  // 연달아 호출되면 이전 타이머를 취소하고 새로 띄운다.
+  const showToast = (type, title, desc = "") => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ type, title, desc });
+    toastTimerRef.current = setTimeout(() => setToast(null), 4000);
+  };
 
   const selectedCampaign =
     campaigns.find((c) => c.id === selectedCampaignId) || null;
@@ -302,7 +346,7 @@ function App() {
     const file = e.target.files[0];
     if (!file) return;
     if (!selectedCampaignId) {
-      alert("먼저 캠페인을 생성하거나 선택한 뒤 명단을 업로드해주세요.");
+      showToast("info", "캠페인을 먼저 선택해주세요", "명단은 캠페인을 생성하거나 선택한 뒤 업로드할 수 있습니다.");
       e.target.value = "";
       return;
     }
@@ -338,11 +382,9 @@ function App() {
             feedback: row.feedback || "",
           })),
         );
-        alert(
-          `🎉 [${selectedCampaign.name}] 명단이 ${rows.length}명으로 갱신되었습니다.`,
-        );
+        showToast("success", "명단 등록 완료", `[${selectedCampaign.name}] 명단이 ${rows.length}명으로 갱신되었습니다.`);
       } catch (err) {
-        alert(`❌ 명단 등록 실패: ${err.message}`);
+        showToast("error", "명단 등록 실패", err.message);
       }
     };
     reader.readAsBinaryString(file);
@@ -426,7 +468,7 @@ function App() {
   const handleVideoUpload = async (id, file) => {
     if (!file) return;
     if (!selectedCampaignId) {
-      alert("캠페인을 선택한 뒤 영상을 업로드해주세요.");
+      showToast("info", "캠페인을 먼저 선택해주세요", "캠페인을 선택한 뒤 영상을 업로드할 수 있습니다.");
       return;
     }
     setInfluencers((prev) =>
@@ -491,7 +533,7 @@ function App() {
             : inf,
         ),
       );
-      alert(`❌ 검수 요청 실패: ${err.message}`);
+      showToast("error", "검수 요청 실패", err.message);
     }
   };
 
@@ -521,18 +563,67 @@ function App() {
       );
       return true;
     } catch (err) {
-      alert(`❌ 저장 실패: ${err.message}`);
+      showToast("error", "저장 실패", err.message);
       return false;
     }
   };
+
+  if (screen === "home") {
+    return (
+      <div className="home">
+        <div className="bar">
+          <button className="logo" onClick={() => setScreen("home")}>
+            <span className="mark" />
+            <span className="word">
+              In<em>Sense</em>
+            </span>
+          </button>
+          <span className="spacer" />
+          <span className="bar-sub">Influencer Content Sensing Solution</span>
+        </div>
+        <div className="home-body">
+          <div className="eyebrow">Get started</div>
+          <h1>어떤 화면으로 접속하시겠어요?</h1>
+          <div className="role-row">
+            <button
+              className="role-btn"
+              onClick={() => {
+                setRole("marketer");
+                setScreen("app");
+              }}
+            >
+              <span className="num">1</span>
+              <div className="role-title">제일기획</div>
+              <div className="arrow">마케터 화면으로 →</div>
+            </button>
+            <button
+              className="role-btn"
+              onClick={() => {
+                setRole("influencer");
+                setScreen("app");
+              }}
+            >
+              <span className="num">2</span>
+              <div className="role-title">MCN / 에이전시</div>
+              <div className="arrow">업로드 화면으로 →</div>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
       {/* 상단 바 */}
       <div className="bar">
-        <div className="brand">
-          REEL<em>CHECK</em>
-        </div>
+        <button className="logo" onClick={() => setScreen("home")}>
+          <span className="mark" />
+          <span className="word">
+            In<em>Sense</em>
+          </span>
+        </button>
+        <span className="spacer" />
         <div className="roles">
           <button
             className={role === "marketer" ? "active" : ""}
@@ -624,6 +715,7 @@ function App() {
                     campaign={campaign}
                     setCampaign={setCampaign}
                     onSave={saveGuidelines}
+                    showToast={showToast}
                   />
                 </div>
               )}
@@ -834,13 +926,7 @@ function App() {
                       <td>{idx + 1}</td>
                       <td>{inf.handle}</td>
                       <td>
-                        {submissionStatusLabel(inf)}
-                        {inf.status?.includes("(음성)") && (
-                          <div className="ocr-pending">
-                            <span className="dot" />
-                            화면 자막 확인 중
-                          </div>
-                        )}
+                        <StatusCell inf={inf} />
                       </td>
                       <td>
                         <span
@@ -942,13 +1028,7 @@ function App() {
                     <td>{idx + 1}</td>
                     <td>{inf.handle}</td>
                     <td>
-                      {submissionStatusLabel(inf)}
-                      {inf.status?.includes("(음성)") && (
-                        <div className="ocr-pending">
-                          <span className="dot" />
-                          화면 자막 확인 중
-                        </div>
-                      )}
+                      <StatusCell inf={inf} />
                     </td>
                     <td>
                       <span
@@ -1306,7 +1386,7 @@ function App() {
                       style={{ backgroundColor: "var(--block)" }}
                       onClick={async () => {
                         if (!feedbackText.trim()) {
-                          alert("반려 사유를 입력해주세요.");
+                          showToast("info", "반려 사유를 입력해주세요", "");
                           return;
                         }
                         const ok = await saveMarketerFeedback(modalInf.id, {
@@ -1348,6 +1428,37 @@ function App() {
           </>
         )}
       </div>
+      {toast && (
+        <div className="toast-wrap">
+          <div className={`toast ${toast.type}`}>
+            <span className="icon">
+              {toast.type === "success" && (
+                <svg viewBox="0 0 24 24" fill="none" width="11" height="11">
+                  <path d="M5 12.5L10 17L19 7" stroke="#18181A" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+              {toast.type === "error" && (
+                <svg viewBox="0 0 24 24" fill="none" width="11" height="11">
+                  <path d="M6 6L18 18M18 6L6 18" stroke="#fff" strokeWidth="3" strokeLinecap="round" />
+                </svg>
+              )}
+              {toast.type === "info" && (
+                <svg viewBox="0 0 24 24" fill="none" width="11" height="11">
+                  <circle cx="12" cy="8" r="1.4" fill="#fff" />
+                  <path d="M12 11.5V17" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
+                </svg>
+              )}
+            </span>
+            <div className="body">
+              <div className="title">{toast.title}</div>
+              {toast.desc && <div className="desc">{toast.desc}</div>}
+            </div>
+            <button className="close" onClick={() => setToast(null)}>
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

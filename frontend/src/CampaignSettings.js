@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 
-export default function CampaignSettings({ campaign, setCampaign, onSave }) {
+export default function CampaignSettings({ campaign, setCampaign, onSave, showToast }) {
     const [saving, setSaving] = useState(false);
     const [competitorOpen, setCompetitorOpen] = useState(false);
     const competitorInputRefs = useRef([]);
@@ -36,9 +36,9 @@ export default function CampaignSettings({ campaign, setCampaign, onSave }) {
         setSaving(true);
         try {
             await onSave();
-            alert('가이드라인이 저장되었습니다.');
+            showToast('success', '가이드라인 저장 완료', '');
         } catch (err) {
-            alert(`가이드라인 저장 실패: ${err.message}`);
+            showToast('error', '가이드라인 저장 실패', err.message);
         } finally {
             setSaving(false);
         }
