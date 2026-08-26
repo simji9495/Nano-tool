@@ -651,8 +651,14 @@ function findSuspiciousFrames(zipped, bans) {
       lowConfidence.push(r);
     }
   }
-  const dedupedBans = dedupeByText(banMatches);
-  const dedupedLow = dedupeByText(lowConfidence).sort((a, b) => a.confidence - b.confidence);
+  // 금칙어 의심(ban)은 실제 위반일 수 있어 정확도가 중요하니 고해상도로,
+  // 단순 저신뢰(lowConfidence)는 대부분 노이즈고 오독이 나와도 "확인 필요"
+  // 배지 + 보수적 판정 프롬프트가 안전망이 되어주니 저해상도로 — 검증
+  // 비용(TPM)을 위험도에 맞게 차등 배분한다. verifySuspiciousVision 참고.
+  const dedupedBans = dedupeByText(banMatches).map((f) => ({ ...f, reason: "ban" }));
+  const dedupedLow = dedupeByText(lowConfidence)
+    .sort((a, b) => a.confidence - b.confidence)
+    .map((f) => ({ ...f, reason: "lowConfidence" }));
   const capped = dedupedLow.slice(0, MAX_LOW_CONFIDENCE_VERIFY);
   if (dedupedLow.length > capped.length) {
     console.warn(
@@ -687,11 +693,16 @@ async function verifySuspiciousVision(frames, bans) {
               role: "user",
               content: [
                 { type: "text", text: prompt },
-                // detail:"low"로 토큰을 아끼려 했더니 "브리지"→"브리저"처럼 오인식이
-                // 늘어 오히려 엉뚱한 위반 판정을 만들었다. 대신 중복 프레임 제거 +
-                // 검증 상한 축소(findSuspiciousFrames)로 요청 수 자체를 줄여서
-                // 예산을 확보하고, 해상도는 기본값(auto)으로 되돌려 판독력을 살린다.
-                { type: "image_url", image_url: { url: f.dataUrl } },
+                // 저신뢰(노이즈) 프레임은 detail:"low"로 토큰을 아낀다 — 이 프레임들만
+                // 8개(중복 제거 후 상한)로도 기본 해상도 기준 분당 토큰 한도를 다 써서
+                // 이어지는 최종 판정 호출까지 429로 막히는 사례를 실측으로 확인했다.
+                // 반대로 금칙어 의심(ban)은 실제 위반일 수 있어 판독력이 중요하므로
+                // 기본 해상도를 유지한다. 저신뢰 프레임의 오독은 "확인 필요" 배지와
+                // 보수적 판정 프롬프트가 안전망 역할을 한다.
+                {
+                  type: "image_url",
+                  image_url: f.reason === "lowConfidence" ? { url: f.dataUrl, detail: "low" } : { url: f.dataUrl },
+                },
               ],
             },
           ],
