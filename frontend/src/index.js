@@ -1040,6 +1040,11 @@ function App() {
                         {activeReview.brandMentioned ? "✅" : "❌"}
                         {"  "}/ 제품명 언급:{" "}
                         {activeReview.productMentioned ? "✅" : "❌"}
+                        {activeReview.reviewNeeded && (
+                          <span style={{ color: "var(--block)", marginLeft: "6px" }}>
+                            ⚠️ 표기 확인 필요 (아래 발견 내역 참고)
+                          </span>
+                        )}
                       </div>
                       {activeReview.matchedUsps?.length > 0 && (
                         <div>
@@ -1083,7 +1088,13 @@ function App() {
                             </thead>
                             <tbody>
                               {activeReview.occurrences.map((o, idx) => (
-                                <tr key={idx} style={{ borderBottom: "1px solid var(--line)" }}>
+                                <tr
+                                  key={idx}
+                                  style={{
+                                    borderBottom: "1px solid var(--line)",
+                                    background: o.needsReview ? "#FFF7E6" : undefined,
+                                  }}
+                                >
                                   <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
                                     {formatTimestamp(o.timestamp)}
                                   </td>
@@ -1099,6 +1110,12 @@ function App() {
                                         {" "}
                                         ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
                                         {o.note ? ` · ${o.note}` : ""})
+                                      </span>
+                                    )}
+                                    {o.needsReview && (
+                                      <span style={{ color: "var(--block)", fontWeight: 600 }}>
+                                        {" "}
+                                        ⚠️ 등록된 표기와 정확히 일치하지 않음 — 원본 확인 필요
                                       </span>
                                     )}
                                   </td>

@@ -492,6 +492,34 @@ occurrences는 브랜드/제품/USP 언급, 금칙어 위반, 오탈자로 의�
   try { parsed = JSON.parse(d.choices?.[0]?.message?.content || "{}"); }
   catch { throw new Error("검수 결과 파싱 실패"); }
 
+  // LLM은 표기가 살짝 달라도 "명확히 같은 대상"이면 브랜드/제품 언급으로 인정한다
+  // (STT/OCR 오인식 흔함). 다만 그 근거 문구가 등록된 정확한 표기와 글자 그대로
+  // 일치하지 않는 근접 불일치는, 실제로는 (a) 인식기 오독이거나 (b) 정말 오탈자인
+  // 두 경우를 자동으로 구분할 방법이 없다 — LLM 자신이 이미 잘못 읽은 것이라면
+  // 스스로도 오독을 자각하지 못한다. 그래서 자동으로 통과/반려를 확정하지 않고
+  // "확인 필요"로 표시해 마케터가 원본을 직접 보고 판단하게 한다.
+  const norm = (s) => String(s || "").replace(/\s+/g, "");
+  const occurrences = Array.isArray(parsed.occurrences)
+    ? parsed.occurrences.map((o) => {
+        const quote = String(o?.quote || "");
+        const type = String(o?.type || "");
+        const target = type === "brand" ? guideline.brand : type === "product" ? guideline.product : "";
+        const needsReview = Boolean(
+          target &&
+            !norm(quote).includes(norm(target)) &&
+            fuzzyContains(norm(quote), norm(target)),
+        );
+        return {
+          timestamp: Number(o?.timestamp) || 0,
+          source: o?.source === "자막" ? "자막" : "음성",
+          quote,
+          type,
+          note: String(o?.note || ""),
+          ...(needsReview ? { needsReview: true } : {}),
+        };
+      })
+    : [];
+
   return {
     result: parsed.result === "통과" ? "통과" : "반려",
     brandMentioned: Boolean(parsed.brandMentioned),
@@ -500,15 +528,8 @@ occurrences는 브랜드/제품/USP 언급, 금칙어 위반, 오탈자로 의�
     missingUsps: Array.isArray(parsed.missingUsps) ? parsed.missingUsps : [],
     violatedBans: Array.isArray(parsed.violatedBans) ? parsed.violatedBans : [],
     feedback: String(parsed.feedback || ""),
-    occurrences: Array.isArray(parsed.occurrences)
-      ? parsed.occurrences.map((o) => ({
-          timestamp: Number(o?.timestamp) || 0,
-          source: o?.source === "자막" ? "자막" : "음성",
-          quote: String(o?.quote || ""),
-          type: String(o?.type || ""),
-          note: String(o?.note || ""),
-        }))
-      : [],
+    occurrences,
+    reviewNeeded: occurrences.some((o) => o.needsReview),
   };
 }
 
