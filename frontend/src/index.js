@@ -579,7 +579,7 @@ function App() {
             </span>
           </button>
           <span className="spacer" />
-          <span className="bar-sub">Influencer Content Sensing Solution</span>
+          <span className="bar-sub">AI-powered Influencer Content Guardrail</span>
         </div>
         <div className="home-body">
           <div className="eyebrow">Get started</div>
