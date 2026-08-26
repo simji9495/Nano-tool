@@ -1027,6 +1027,7 @@ async function processUploadedVideo({ videoPath, influencerId, campaign }) {
       const audioOnlyText = `[음성 전사]\n${audioTimestamped}\n\n[화면 자막/텍스트]\n(화면 자막 검수 진행 중 — 잠시 후 결과가 갱신됩니다)`;
       audioReview = await reviewAgainstGuidelines(audioOnlyText, campaign);
     } catch (e) {
+      console.error("[1단계] 음성 기준 가이드라인 검수 실패:", e.message || e);
       audioReview = { error: String(e.message || e) };
     }
   }
@@ -1113,6 +1114,11 @@ app.post("/api/uploads/presign", requireR2, async (req, res) => {
 app.post("/api/transcribe/from-storage", requireR2, async (req, res) => {
   const { storagePath, influencerId, campaign } = req.body || {};
   if (!storagePath) return res.status(400).json({ error: "storagePath가 필요합니다." });
+
+  // 이후 단계가 어디서 실패하든 최소한 "요청이 들어왔다"는 흔적은 항상 남겨서,
+  // 배포 전환 시점에 구 인스턴스로 요청이 가 로그가 안 보이는 것인지, 아니면
+  // 요청 자체가 서버에 닿지 않은 것인지 구분할 수 있게 한다.
+  console.log(`[스토리지 경유 검수] 요청 접수 (influencerId=${influencerId || "-"}, path=${storagePath})`);
 
   res.json({ started: true });
 
