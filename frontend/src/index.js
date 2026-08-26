@@ -629,13 +629,13 @@ function App() {
             className={role === "marketer" ? "active" : ""}
             onClick={() => setRole("marketer")}
           >
-            마케터 화면
+            제일기획
           </button>
           <button
             className={role === "influencer" ? "active" : ""}
             onClick={() => setRole("influencer")}
           >
-            인플루언서 업로드
+            MCN/에이전시
           </button>
         </div>
       </div>

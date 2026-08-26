@@ -219,7 +219,10 @@ export default function CampaignCreate({
                   <td>{c.manager}</td>
                   <td>{(c.influencers || []).length}명</td>
                   <td>
-                    <button className="btn sm" onClick={() => onSelect(c.id)}>
+                    <button
+                      className={`btn sm ${c.id === selectedCampaignId ? "" : "outline"}`}
+                      onClick={() => onSelect(c.id)}
+                    >
                       {canCreate
                         ? c.id === selectedCampaignId ? "선택됨 · 검수하기" : "이 캠페인으로 검수"
                         : c.id === selectedCampaignId ? "선택됨 · 영상 업로드하기" : "이 캠페인으로 영상 업로드하기"}
