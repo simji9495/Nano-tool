@@ -82,8 +82,8 @@ export default function CampaignSettings({ campaign, setCampaign, onSave }) {
                 </div>
                 {!showCompetitor && (
                     <button type="button" onClick={() => setCompetitorOpen(true)}
-                        style={{ background: '#FFF', border: '1px solid var(--block)', color: 'var(--block)', borderRadius: '999px', padding: '5px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', marginBottom: '10px' }}>
-                        + 경쟁 브랜드 언급
+                        style={{ background: '#FF9800', border: 'none', color: '#FFF', borderRadius: '999px', padding: '6px 14px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', marginBottom: '10px', boxShadow: '0 1px 3px rgba(255,152,0,0.4)' }}>
+                        🏷️ 자주 쓰는 항목 추가: 경쟁 브랜드 언급
                     </button>
                 )}
                 {showCompetitor && (
