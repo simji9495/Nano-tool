@@ -802,6 +802,27 @@ function App() {
                       <td>
                         <span
                           className={`st ${inf.result === "통과" ? "pass" : inf.result === "-" ? "none" : "block"}`}
+                          role={inf.result !== "-" ? "button" : undefined}
+                          tabIndex={inf.result !== "-" ? 0 : undefined}
+                          title={inf.result !== "-" ? "AI 검수 사유 보기" : undefined}
+                          style={
+                            inf.result !== "-"
+                              ? { cursor: "pointer" }
+                              : undefined
+                          }
+                          onClick={() => {
+                            if (inf.result === "-") return;
+                            setFeedbackMode("view");
+                            setSelectedInf(inf);
+                          }}
+                          onKeyDown={(e) => {
+                            if (inf.result === "-") return;
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setFeedbackMode("view");
+                              setSelectedInf(inf);
+                            }
+                          }}
                         >
                           {inf.result}
                         </span>
