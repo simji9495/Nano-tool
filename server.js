@@ -424,7 +424,41 @@ async function keyframes(videoPath, opts = {}) {
 
 /* ───────────── 1.5 가이드라인 준수 검수 ───────────── */
 
-async function reviewAgainstGuidelines(text, campaign) {
+/* [Ns] 텍스트 태그가 붙은 한 소스(음성 또는 자막)의 텍스트를 줄 단위로 스캔해
+ * 대상 문구가 등장하는지 찾는다. 공백만 무시하고 완전히 일치하면 확정
+ * 매치, 편집거리로 근접하지만 완전히 일치하지는 않으면(OCR/STT 오독인지
+ * 실제 오탈자인지 자동으로 구분할 수 없음) 근접 매치로 따로 모은다. */
+function scanExactOccurrences(taggedText, target, source, type) {
+  const exact = [];
+  const near = [];
+  if (!target) return { exact, near };
+  const normTarget = target.replace(/\s+/g, "");
+  for (const line of String(taggedText || "").split("\n")) {
+    const m = line.match(/^\[([\d.]+)s\]\s*(.*)$/);
+    if (!m) continue;
+    const timestamp = Number(m[1]) || 0;
+    const quote = m[2] || "";
+    const normQuote = quote.replace(/\s+/g, "");
+    if (!normQuote) continue;
+    if (normQuote.includes(normTarget)) {
+      exact.push({ timestamp, source, quote, type });
+    } else if (fuzzyContains(normQuote, normTarget)) {
+      near.push({ timestamp, source, quote, type, needsReview: true });
+    }
+  }
+  return { exact, near };
+}
+
+/* 브랜드명·제품명·경쟁 브랜드명은 등록된 표기와 공백만 무시하고 정확히
+ * 일치하는지를 결정론적으로(문자열 비교로) 판정한다 — LLM에게 맡기면
+ * "표기가 살짝 달라도 같은 대상"이라며 관대하게 인정하는데, 그 판단
+ * 근거가 우리 OCR/STT의 오독인지 실제 정확한 표기인지 LLM 스스로도 구분할
+ * 수 없어 신뢰할 수 없다("요자식"을 경쟁 브랜드 언급으로 오판한 사례).
+ * 정확히 일치하지 않지만 편집거리상 근접한 경우는 자동으로 통과/위반을
+ * 단정하지 않고 "확인 필요"로만 표시해 마케터가 직접 판단하게 한다.
+ * 반대로 USP 충족 여부·그 외 금칙 항목(문맥/부정어 이해가 필요)은 여전히
+ * LLM에게 맡긴다 — 이건 정확한 문자열 비교로는 판단할 수 없는 영역이다. */
+async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
 
@@ -434,41 +468,53 @@ async function reviewAgainstGuidelines(text, campaign) {
     product: campaign?.product || "",
     usps: Array.isArray(campaign?.usps) ? campaign.usps.filter(Boolean) : [],
     bans: Array.isArray(campaign?.bans) ? campaign.bans.filter(Boolean) : [],
+    competitorBrands: Array.isArray(campaign?.competitorBrands) ? campaign.competitorBrands.filter(Boolean) : [],
   };
+
+  const audioTagged = audioText || "";
+  const captionTagged = captionText || "";
+  const combinedForPrompt = `[음성 전사]\n${audioTagged || "(없음)"}\n\n[화면 자막/텍스트]\n${captionTagged || "(없음)"}`;
+
+  const brandAudio = scanExactOccurrences(audioTagged, guideline.brand, "음성", "brand");
+  const brandCaption = scanExactOccurrences(captionTagged, guideline.brand, "자막", "brand");
+  const productAudio = scanExactOccurrences(audioTagged, guideline.product, "음성", "product");
+  const productCaption = scanExactOccurrences(captionTagged, guideline.product, "자막", "product");
+  const brandExact = [...brandAudio.exact, ...brandCaption.exact];
+  const brandNear = [...brandAudio.near, ...brandCaption.near];
+  const productExact = [...productAudio.exact, ...productCaption.exact];
+  const productNear = [...productAudio.near, ...productCaption.near];
+
+  const competitorExact = [];
+  const competitorNear = [];
+  for (const name of guideline.competitorBrands) {
+    const a = scanExactOccurrences(audioTagged, name, "음성", "ban");
+    const c = scanExactOccurrences(captionTagged, name, "자막", "ban");
+    competitorExact.push(...a.exact.map((o) => ({ ...o, note: name })), ...c.exact.map((o) => ({ ...o, note: name })));
+    competitorNear.push(...a.near.map((o) => ({ ...o, note: name })), ...c.near.map((o) => ({ ...o, note: name })));
+  }
 
   const prompt = `다음은 인플루언서 광고 영상에서 추출한 텍스트다. 대괄호 [숫자s]는 영상 내 등장 시각(초)이다.
 "[음성 전사]" 구간에서 나온 내용은 출처를 "음성"으로, "[화면 자막/텍스트]" 구간에서 나온 내용은 출처를 "자막"으로 표시하라.
-아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라.
+아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라. 브랜드명·제품명·경쟁 브랜드 언급 여부는
+이미 별도 로직으로 판정을 마쳤으니 너는 신경 쓰지 않아도 된다 — 오직 USP 충족 여부와 아래 "그 외 금칙 항목"만 판단하라.
 
-brandMentioned/productMentioned는 실제로 지정된 브랜드명·제품명과 (표기가 살짝
-다르더라도) 명확히 같은 대상을 가리킬 때만 true로 판단하라. 음성 전사는 STT
-오인식으로 다른 단어로 잘못 인식되는 경우가 흔하다 — 문맥상 브랜드/제품과
-무관해 보이는 단어("이 제품", "그거", 오인식된 엉뚱한 단어 등)는 실제 언급으로
-인정하지 말고, 그런 부분을 발견하면 occurrences에 type "typo"로 남겨라.
+USP는 문맥을 고려해 판단하라 — 표현이 달라도 같은 의미면 충족으로 인정한다(예: "쿨링감"이 USP라면 "청량한 느낌"이라는
+표현도 충족으로 인정).
 
-금칙어 위반(violatedBans)은 텍스트에 그 의미가 명확하고 뚜렷하게 나타날 때만
-표시하라. 화면 자막(OCR)은 오인식이 흔해서, 무슨 뜻인지 불분명하거나 애매한
-문구만으로 "타사 브랜드 언급"처럼 해석이 필요한 금칙어를 단정하지 말고, 그런
-경우는 occurrences에 type "typo"로만 남겨라 — 위반으로 확신이 설 때만
-violatedBans/type "ban"으로 표시한다.
-
-brandMentioned/productMentioned/violatedBans는 서로 완전히 독립적으로
-판단하라 — 예를 들어 어딘가에서 금칙어 위반이 의심된다고 해서 브랜드/제품이
-언급되지 않은 것으로 끌어내리지 말고, 브랜드/제품 언급 여부는 오직 그 자체의
-실제 언급 여부만 보고 판단하라.
+"그 외 금칙 항목"도 문맥을 고려해 판단하되, 부정어를 반드시 반영하라 — 예를 들어 "자극감 언급"이 금칙이고 자막에
+"화한 느낌"이 있으면 위반이지만, "화한 느낌 없이"처럼 부정된 표현은 오히려 해당 문제가 없다는 뜻이므로 위반이 아니다.
+의미가 불분명하거나 애매한 문구만으로 단정하지 말고, 확신이 설 때만 violatedBans로 표시한다.
 
 [캠페인 가이드라인]
-- 정확한 브랜드명: ${guideline.brand || "(미지정)"}
-- 정확한 제품명: ${guideline.product || "(미지정)"}
 - 필수 포함 USP: ${guideline.usps.join(", ") || "(없음)"}
-- 금칙어/금기사항: ${guideline.bans.join(", ") || "(없음)"}
+- 그 외 금칙 항목: ${guideline.bans.join(", ") || "(없음)"}
 
 [텍스트]
-"""${text}"""
+"""${combinedForPrompt}"""
 
 아래 JSON 형식으로만 답하라:
-{"result":"통과"|"반려","brandMentioned":boolean,"productMentioned":boolean,"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장","occurrences":[{"timestamp":숫자(초),"source":"음성"|"자막","quote":"실제 언급되거나 오탈자가 있었던 문구","type":"brand"|"product"|"usp"|"ban"|"typo","note":"간단 설명(선택, 없으면 빈 문자열)"}]}
-occurrences는 브랜드/제품/USP 언급, 금칙어 위반, 오탈자로 의심되는 부분마다 하나씩 만들어라. 해당 없으면 빈 배열로 답하라.`;
+{"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장","occurrences":[{"timestamp":숫자(초),"source":"음성"|"자막","quote":"실제 언급되거나 문제된 문구","type":"usp"|"ban"|"typo","note":"간단 설명(선택, 없으면 빈 문자열)"}]}
+occurrences는 USP 충족, 그 외 금칙 위반, 오탈자로 의심되는 부분마다 하나씩 만들어라. 해당 없으면 빈 배열로 답하라.`;
 
   const r = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -492,41 +538,53 @@ occurrences는 브랜드/제품/USP 언급, 금칙어 위반, 오탈자로 의�
   try { parsed = JSON.parse(d.choices?.[0]?.message?.content || "{}"); }
   catch { throw new Error("검수 결과 파싱 실패"); }
 
-  // LLM은 표기가 살짝 달라도 "명확히 같은 대상"이면 브랜드/제품 언급으로 인정한다
-  // (STT/OCR 오인식 흔함). 다만 그 근거 문구가 등록된 정확한 표기와 글자 그대로
-  // 일치하지 않는 근접 불일치는, 실제로는 (a) 인식기 오독이거나 (b) 정말 오탈자인
-  // 두 경우를 자동으로 구분할 방법이 없다 — LLM 자신이 이미 잘못 읽은 것이라면
-  // 스스로도 오독을 자각하지 못한다. 그래서 자동으로 통과/반려를 확정하지 않고
-  // "확인 필요"로 표시해 마케터가 원본을 직접 보고 판단하게 한다.
-  const norm = (s) => String(s || "").replace(/\s+/g, "");
-  const occurrences = Array.isArray(parsed.occurrences)
-    ? parsed.occurrences.map((o) => {
-        const quote = String(o?.quote || "");
-        const type = String(o?.type || "");
-        const target = type === "brand" ? guideline.brand : type === "product" ? guideline.product : "";
-        const needsReview = Boolean(
-          target &&
-            !norm(quote).includes(norm(target)) &&
-            fuzzyContains(norm(quote), norm(target)),
-        );
-        return {
+  const missingUsps = Array.isArray(parsed.missingUsps) ? parsed.missingUsps : [];
+  const contextualViolatedBans = Array.isArray(parsed.violatedBans) ? parsed.violatedBans : [];
+  const llmOccurrences = Array.isArray(parsed.occurrences)
+    ? parsed.occurrences
+        .filter((o) => o?.type === "usp" || o?.type === "ban" || o?.type === "typo")
+        .map((o) => ({
           timestamp: Number(o?.timestamp) || 0,
           source: o?.source === "자막" ? "자막" : "음성",
-          quote,
-          type,
+          quote: String(o?.quote || ""),
+          type: String(o?.type || ""),
           note: String(o?.note || ""),
-          ...(needsReview ? { needsReview: true } : {}),
-        };
-      })
+        }))
     : [];
 
+  // 근접 매치(정확히는 아니지만 편집거리상 가까움)만 있고 정확 매치가 없는 경우도
+  // "언급됨"으로 인정한다 — 화면에 정확히 쓰여 있는데 우리 OCR이 오독했을 가능성이
+  // 있는 상태에서 자동으로 반려시키면 안 된다. 근접 매치는 자동 판정에 영향을 주지
+  // 않고 needsReview 배지로만 마케터에게 확인을 맡긴다. 반대로 확실한 정확 매치도,
+  // 근접 매치도 전혀 없을 때만 "언급 안 됨"으로 취급해 반려에 반영한다.
+  const brandMentioned = brandExact.length > 0 || brandNear.length > 0;
+  const productMentioned = productExact.length > 0 || productNear.length > 0;
+  // 경쟁 브랜드는 반대 방향으로 보수적이다 — 확실한 정확 매치만 위반으로 취급하고,
+  // 근접 매치(오독일 수도 있음)는 위반으로 단정하지 않고 확인 필요 배지로만 남긴다.
+  const violatedBans = [...competitorExact.map((o) => o.note), ...contextualViolatedBans];
+
+  const occurrences = [
+    ...brandExact,
+    ...brandNear,
+    ...productExact,
+    ...productNear,
+    ...competitorExact.map((o) => ({ ...o, note: `타 브랜드 언급 (${o.note})` })),
+    ...competitorNear.map((o) => ({ ...o, note: `근접 표기 — 실제 위반인지 확인 필요 (${o.note})` })),
+    ...llmOccurrences,
+  ].sort((a, b) => a.timestamp - b.timestamp);
+
+  const result =
+    brandMentioned && productMentioned && missingUsps.length === 0 && violatedBans.length === 0
+      ? "통과"
+      : "반려";
+
   return {
-    result: parsed.result === "통과" ? "통과" : "반려",
-    brandMentioned: Boolean(parsed.brandMentioned),
-    productMentioned: Boolean(parsed.productMentioned),
+    result,
+    brandMentioned,
+    productMentioned,
     matchedUsps: Array.isArray(parsed.matchedUsps) ? parsed.matchedUsps : [],
-    missingUsps: Array.isArray(parsed.missingUsps) ? parsed.missingUsps : [],
-    violatedBans: Array.isArray(parsed.violatedBans) ? parsed.violatedBans : [],
+    missingUsps,
+    violatedBans,
     feedback: String(parsed.feedback || ""),
     occurrences,
     reviewNeeded: occurrences.some((o) => o.needsReview),
@@ -596,14 +654,19 @@ function levenshtein(a, b) {
   return dp[a.length][b.length];
 }
 
-/* 오탈자/우회 표기(예: "화 학 성 분")까지 잡기 위한 편집거리 기반 유사 포함 검사 */
+/* 오탈자/우회 표기(예: "화 학 성 분")까지 잡기 위한 편집거리 기반 유사 포함 검사.
+ * phrase 길이 ± maxDist 범위의 모든 부분 문자열을 실제로 비교한다 — 고정
+ * 오프셋 윈도우만 보면 문장 중간 임의 위치에 있는 오독 문구를 놓칠 수 있다
+ * (브랜드/제품명이 짧은 문구 하나가 아니라 긴 문장 속 어딘가에 등장하는
+ * 실제 자막/음성 텍스트를 스캔해야 하는 용도이므로 정확도가 중요하다). */
 function fuzzyContains(text, phrase, maxRatio = 0.3) {
   if (!text || !phrase) return false;
   if (text.includes(phrase)) return true;
   const maxDist = Math.max(1, Math.floor(phrase.length * maxRatio));
-  for (let i = 0; i <= Math.max(0, text.length - phrase.length + maxDist); i++) {
-    const window = text.slice(i, i + phrase.length + maxDist);
-    if (window.length >= phrase.length - maxDist && levenshtein(window, phrase) <= maxDist) return true;
+  for (let len = Math.max(1, phrase.length - maxDist); len <= phrase.length + maxDist; len++) {
+    for (let i = 0; i + len <= text.length; i++) {
+      if (levenshtein(text.slice(i, i + len), phrase) <= maxDist) return true;
+    }
   }
   return false;
 }
@@ -791,7 +854,7 @@ const monthDate = (year, month) => {
 };
 
 app.post("/api/campaigns", requireSupabase, async (req, res) => {
-  const { advertiser, name, startDate, endDate, startYear, startMonth, endMonth, manager, brand, product, usps, bans } = req.body || {};
+  const { advertiser, name, startDate, endDate, startYear, startMonth, endMonth, manager, brand, product, usps, bans, competitorBrands } = req.body || {};
   if (!advertiser || !name) {
     return res.status(400).json({ error: "광고주명과 프로젝트명은 필수입니다." });
   }
@@ -807,6 +870,7 @@ app.post("/api/campaigns", requireSupabase, async (req, res) => {
       product: product || "",
       usps: Array.isArray(usps) ? usps : [],
       bans: Array.isArray(bans) ? bans : [],
+      competitor_brands: Array.isArray(competitorBrands) ? competitorBrands : [],
     })
     .select()
     .single();
@@ -815,7 +879,7 @@ app.post("/api/campaigns", requireSupabase, async (req, res) => {
 });
 
 app.put("/api/campaigns/:id", requireSupabase, async (req, res) => {
-  const { advertiser, name, startDate, endDate, manager, brand, product, usps, bans } = req.body || {};
+  const { advertiser, name, startDate, endDate, manager, brand, product, usps, bans, competitorBrands } = req.body || {};
   const patch = {};
   if (advertiser !== undefined) patch.advertiser = advertiser;
   if (name !== undefined) patch.name = name;
@@ -826,6 +890,7 @@ app.put("/api/campaigns/:id", requireSupabase, async (req, res) => {
   if (product !== undefined) patch.product = product;
   if (usps !== undefined) patch.usps = usps;
   if (bans !== undefined) patch.bans = bans;
+  if (competitorBrands !== undefined) patch.competitor_brands = competitorBrands;
 
   const { data, error } = await supabase
     .from("reelcheck_campaigns")
@@ -950,16 +1015,18 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
     timings.tesseractMs = Date.now() - t1;
     const zipped = frames.map((f, i) => ({ ...f, ...ocrResults[i] }));
 
-    const suspicious = findSuspiciousFrames(zipped, campaign.bans);
+    // 프레임을 정밀검증(Vision) 대상으로 고를 땐 경쟁 브랜드명 목록만 본다 —
+    // "그 외 금칙 항목"은 문맥 판단이 필요해 프레임 단위가 아니라 전체 텍스트
+    // 단위로(reviewAgainstGuidelines) 판단한다.
+    const suspicious = findSuspiciousFrames(zipped, campaign.competitorBrands);
     timings.suspiciousCount = suspicious.length;
 
     const t2 = Date.now();
-    const verifications = suspicious.length ? await verifySuspiciousVision(suspicious, campaign.bans) : [];
+    const verifications = suspicious.length ? await verifySuspiciousVision(suspicious, campaign.competitorBrands) : [];
     timings.visionVerifyMs = Date.now() - t2;
 
     const ocrSummary = buildOcrSummary(zipped, verifications);
     const captionText = ocrSummary || "(감지된 텍스트 없음)";
-    const combinedText = `[음성 전사]\n${audioText}\n\n[화면 자막/텍스트 (OCR: Tesseract${verifications.length ? " + GPT-4o 검증" : ""})]\n${captionText}`;
 
     const t3 = Date.now();
     // 종합 판정(음성+자막)과 자막 단독 판정을 순차로 구한다. 직전 비전 검증
@@ -968,9 +1035,9 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
     // 전체가 무산되는 사례가 있었다 — 순차 실행으로 순간 최대 요청량을
     // 절반으로 줄인다. 음성 단독 판정은 1단계에서 이미 계산해둔 것을 그대로
     // 쓴다(중복 호출 방지).
-    const combinedReview = await reviewAgainstGuidelines(combinedText, campaign);
+    const combinedReview = await reviewAgainstGuidelines({ audioText, captionText }, campaign);
     const captionReview = ocrSummary
-      ? await reviewAgainstGuidelines(`[화면 자막/텍스트]\n${captionText}`, campaign)
+      ? await reviewAgainstGuidelines({ captionText }, campaign)
       : {
           result: "반려",
           brandMentioned: false,
@@ -1035,8 +1102,7 @@ async function processUploadedVideo({ videoPath, influencerId, campaign }) {
   let audioReview = null;
   if (campaign) {
     try {
-      const audioOnlyText = `[음성 전사]\n${audioTimestamped}\n\n[화면 자막/텍스트]\n(화면 자막 검수 진행 중 — 잠시 후 결과가 갱신됩니다)`;
-      audioReview = await reviewAgainstGuidelines(audioOnlyText, campaign);
+      audioReview = await reviewAgainstGuidelines({ audioText: audioTimestamped }, campaign);
     } catch (e) {
       console.error("[1단계] 음성 기준 가이드라인 검수 실패:", e.message || e);
       audioReview = { error: String(e.message || e) };

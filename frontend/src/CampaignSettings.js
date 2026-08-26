@@ -47,7 +47,31 @@ export default function CampaignSettings({ campaign, setCampaign, onSave }) {
                 </button>
             </div>
             <div style={{ marginTop: '15px' }}>
-                <label className="lab">브랜드 금기사항 및 금칙어 목록</label>
+                <label className="lab">경쟁 브랜드명 (기입한 문자 그대로 정확히 검수 — 띄어쓰기만 무시)</label>
+                <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '6px' }}>
+                    구체적인 브랜드명을 그대로 적어주세요. 예: "아이디얼포맨"이라고 적으면 "아이디얼 포맨"처럼 띄어쓰기가 달라도 찾아내 반려시킵니다.
+                </div>
+                {campaign.competitorBrands.map((name, i) => (
+                    <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
+                        <input className="in" style={{ borderColor: 'var(--block)' }} value={name} onChange={(e) => {
+                            let next = [...campaign.competitorBrands]; next[i] = e.target.value; setCampaign({ ...campaign, competitorBrands: next });
+                        }} />
+                        <button type="button" onClick={() => setCampaign({ ...campaign, competitorBrands: campaign.competitorBrands.filter((_, idx) => idx !== i) })}
+                            style={{ background: '#FFF', border: '1px solid var(--line)', color: 'var(--graphite)', borderRadius: '4px', width: '32px', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>
+                            −
+                        </button>
+                    </div>
+                ))}
+                <button type="button" onClick={() => setCampaign({ ...campaign, competitorBrands: [...campaign.competitorBrands, ''] })}
+                    style={{ background: '#FFF', border: '1px solid var(--block)', color: 'var(--block)', borderRadius: '4px', padding: '5px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
+                    + 경쟁 브랜드명 추가
+                </button>
+            </div>
+            <div style={{ marginTop: '15px' }}>
+                <label className="lab">그 외 금칙 항목 (문맥 고려하여 검수)</label>
+                <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '6px' }}>
+                    경쟁 브랜드명이 아닌 개념적인 금지 사항을 적어주세요. 예: "자극감 언급"이라고 적으면 "화한 느낌" 같은 표현도 찾아내지만, "화한 느낌 없이"처럼 부정된 표현은 위반으로 보지 않습니다.
+                </div>
                 {campaign.bans.map((ban, i) => (
                     <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
                         <input className="in" style={{ borderColor: 'var(--block)' }} value={ban} onChange={(e) => {
@@ -61,7 +85,7 @@ export default function CampaignSettings({ campaign, setCampaign, onSave }) {
                 ))}
                 <button type="button" onClick={() => setCampaign({ ...campaign, bans: [...campaign.bans, ''] })}
                     style={{ background: '#FFF', border: '1px solid var(--block)', color: 'var(--block)', borderRadius: '4px', padding: '5px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
-                    + 금칙어 추가
+                    + 금칙 항목 추가
                 </button>
             </div>
             <button className="btn stamp" style={{ marginTop: '15px' }} disabled={saving} onClick={handleSave}>{saving ? '저장 중...' : '가이드라인 저장'}</button>

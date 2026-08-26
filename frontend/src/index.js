@@ -32,6 +32,7 @@ const defaultGuidelines = {
   product: "",
   usps: [""],
   bans: [""],
+  competitorBrands: [""],
 };
 
 function loadLocal() {
@@ -84,6 +85,7 @@ function mapApiCampaign(row, localInfluencers = []) {
     product: row.product || "",
     usps: Array.isArray(row.usps) && row.usps.length ? row.usps : [""],
     bans: Array.isArray(row.bans) && row.bans.length ? row.bans : [""],
+    competitorBrands: Array.isArray(row.competitor_brands) && row.competitor_brands.length ? row.competitor_brands : [""],
     influencers: localInfluencers,
   };
 }
@@ -111,6 +113,7 @@ function App() {
         product: selectedCampaign.product || "",
         usps: selectedCampaign.usps?.length ? selectedCampaign.usps : [""],
         bans: selectedCampaign.bans?.length ? selectedCampaign.bans : [""],
+        competitorBrands: selectedCampaign.competitorBrands?.length ? selectedCampaign.competitorBrands : [""],
       }
     : defaultGuidelines;
 
@@ -192,6 +195,7 @@ function App() {
         product: campaign.product,
         usps: campaign.usps,
         bans: campaign.bans,
+        competitorBrands: campaign.competitorBrands,
       }),
     });
     const data = await res.json();
@@ -212,6 +216,7 @@ function App() {
       product: value.product,
       usps: value.usps,
       bans: value.bans,
+      competitorBrands: value.competitorBrands,
     });
   };
 
