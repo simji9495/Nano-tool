@@ -1,7 +1,28 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 
 export default function CampaignSettings({ campaign, setCampaign, onSave }) {
     const [saving, setSaving] = useState(false);
+    const competitorInputRefs = useRef([]);
+
+    // 콤마를 입력(또는 여러 개를 콤마로 붙여넣기)하면 그 앞부분을 확정된
+    // 항목으로 쪼개고, 마지막 조각은 계속 입력 중인 값으로 남겨 새 입력란이
+    // 자동으로 열린 것처럼 만든다 — 매번 "+ 추가" 버튼을 누르는 번거로움을 줄인다.
+    const handleCompetitorChange = (i, rawValue) => {
+        if (!rawValue.includes(',')) {
+            let next = [...campaign.competitorBrands];
+            next[i] = rawValue;
+            setCampaign({ ...campaign, competitorBrands: next });
+            return;
+        }
+        const parts = rawValue.split(',').map((s) => s.trim());
+        const trailing = parts.pop();
+        const completed = parts.filter(Boolean);
+        let next = [...campaign.competitorBrands];
+        next.splice(i, 1, ...completed, trailing);
+        setCampaign({ ...campaign, competitorBrands: next });
+        const focusIndex = i + completed.length;
+        requestAnimationFrame(() => competitorInputRefs.current[focusIndex]?.focus());
+    };
 
     const handleSave = async () => {
         setSaving(true);
@@ -49,13 +70,17 @@ export default function CampaignSettings({ campaign, setCampaign, onSave }) {
             <div style={{ marginTop: '15px' }}>
                 <label className="lab">경쟁 브랜드명 (기입한 문자 그대로 정확히 검수 — 띄어쓰기만 무시)</label>
                 <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '6px' }}>
-                    구체적인 브랜드명을 그대로 적어주세요. 예: "아이디얼포맨"이라고 적으면 "아이디얼 포맨"처럼 띄어쓰기가 달라도 찾아내 반려시킵니다.
+                    구체적인 브랜드명을 그대로 적어주세요. 예: "아이디얼포맨"이라고 적으면 "아이디얼 포맨"처럼 띄어쓰기가 달라도 찾아내 반려시킵니다. 콤마(,)로 구분해 여러 개를 한 번에 붙여넣어도 자동으로 나뉩니다.
                 </div>
                 {campaign.competitorBrands.map((name, i) => (
                     <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
-                        <input className="in" style={{ borderColor: 'var(--block)' }} value={name} onChange={(e) => {
-                            let next = [...campaign.competitorBrands]; next[i] = e.target.value; setCampaign({ ...campaign, competitorBrands: next });
-                        }} />
+                        <input
+                            className="in"
+                            style={{ borderColor: 'var(--block)' }}
+                            value={name}
+                            ref={(el) => { competitorInputRefs.current[i] = el; }}
+                            onChange={(e) => handleCompetitorChange(i, e.target.value)}
+                        />
                         <button type="button" onClick={() => setCampaign({ ...campaign, competitorBrands: campaign.competitorBrands.filter((_, idx) => idx !== i) })}
                             style={{ background: '#FFF', border: '1px solid var(--line)', color: 'var(--graphite)', borderRadius: '4px', width: '32px', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>
                             −
