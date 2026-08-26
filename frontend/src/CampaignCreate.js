@@ -22,7 +22,11 @@ export default function CampaignCreate({
   selectedCampaignId,
   onCreate,
   onSelect,
+  role,
 }) {
+  // 캠페인 정보 입력(생성)은 마케터의 기능이다 — 인플루언서 업로드 화면에서는
+  // 입력란을 아예 숨기고, 이미 생성된 캠페인 중에서 선택만 하게 한다.
+  const canCreate = role !== "influencer";
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -71,6 +75,7 @@ export default function CampaignCreate({
 
   return (
     <div>
+      {canCreate && (
       <div className="card">
         <div className="card-hd">
           <h2>캠페인 생성</h2>
@@ -175,14 +180,17 @@ export default function CampaignCreate({
           </button>
         </form>
       </div>
+      )}
 
       <div className="card">
         <div className="card-hd">
-          <h2>생성된 캠페인</h2>
+          <h2>{canCreate ? "생성된 캠페인" : "캠페인 목록"}</h2>
         </div>
         {campaigns.length === 0 ? (
           <p style={{ fontSize: 13, color: "var(--mute)", margin: 0 }}>
-            아직 생성된 캠페인이 없습니다. 위 정보로 첫 캠페인을 만들어주세요.
+            {canCreate
+              ? "아직 생성된 캠페인이 없습니다. 위 정보로 첫 캠페인을 만들어주세요."
+              : "아직 등록된 캠페인이 없습니다. 마케터가 캠페인을 생성하면 여기서 선택할 수 있습니다."}
           </p>
         ) : (
           <table className="tbl">
@@ -212,7 +220,9 @@ export default function CampaignCreate({
                   <td>{(c.influencers || []).length}명</td>
                   <td>
                     <button className="btn sm" onClick={() => onSelect(c.id)}>
-                      {c.id === selectedCampaignId ? "선택됨 · 검수하기" : "이 캠페인으로 검수"}
+                      {canCreate
+                        ? c.id === selectedCampaignId ? "선택됨 · 검수하기" : "이 캠페인으로 검수"
+                        : c.id === selectedCampaignId ? "선택됨 · 영상 업로드하기" : "이 캠페인으로 영상 업로드하기"}
                     </button>
                   </td>
                 </tr>

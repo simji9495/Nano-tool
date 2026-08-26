@@ -646,13 +646,13 @@ function App() {
             className={tab === "campaign" ? "active" : ""}
             onClick={() => setTab("campaign")}
           >
-            캠페인 생성
+            {role === "influencer" ? "캠페인 선택" : "캠페인 생성"}
           </button>
           <button
             className={tab === "dashboard" ? "active" : ""}
             onClick={() => setTab("dashboard")}
           >
-            검수 대시보드
+            {role === "influencer" ? "콘텐츠 검수 현황" : "검수 대시보드"}
           </button>
         </div>
 
@@ -662,6 +662,7 @@ function App() {
             selectedCampaignId={selectedCampaignId}
             onCreate={handleCreateCampaign}
             onSelect={handleSelectCampaign}
+            role={role}
           />
         ) : (
           <>
