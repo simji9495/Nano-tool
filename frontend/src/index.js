@@ -56,12 +56,11 @@ function formatTimestamp(sec) {
   return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
 }
 
-// AI 판정이 틀릴 수 있으니, 마케터가 명시적으로 판정을 내리면(통과/반려) 그게
-// AI 판정보다 우선한다 — 마케터가 아직 판정을 안 내렸으면 AI 판정을 그대로 따른다.
+// AI 판정은 참고용일 뿐, 실제 업로드(게시) 가능여부는 마케터가 직접 "통과"를
+// 눌러 확정해야만 O가 된다 — 아직 마케터가 판정하지 않았으면 AI 판정과 무관하게
+// 항상 X다(AI 판정 오류 가능성을 감안해 최종 승인 권한은 마케터에게만 있다).
 function isUploadEligible(inf) {
-  if (inf.marketerResult === "통과") return true;
-  if (inf.marketerResult === "반려") return false;
-  return inf.result === "통과";
+  return inf.marketerResult === "통과";
 }
 
 const OCCURRENCE_TYPE_LABEL = {
@@ -1299,13 +1298,6 @@ function App() {
                   justifyContent: "flex-end",
                 }}
               >
-                <button
-                  className="btn"
-                  style={{ backgroundColor: "#858E88" }}
-                  onClick={() => setSelectedInf(null)}
-                >
-                  닫기
-                </button>
                 {!isView && (
                   <>
                     <button
@@ -1323,7 +1315,7 @@ function App() {
                         if (ok) setSelectedInf(null);
                       }}
                     >
-                      반려
+                      코멘트 저장 및 반려
                     </button>
                     <button
                       className="btn"
@@ -1338,17 +1330,15 @@ function App() {
                     >
                       통과
                     </button>
-                    <button
-                      className="btn stamp"
-                      onClick={async () => {
-                        const ok = await saveMarketerFeedback(modalInf.id, { feedback: feedbackText });
-                        if (ok) setSelectedInf(null);
-                      }}
-                    >
-                      코멘트만 저장
-                    </button>
                   </>
                 )}
+                <button
+                  className="btn"
+                  style={{ backgroundColor: "#858E88" }}
+                  onClick={() => setSelectedInf(null)}
+                >
+                  닫기
+                </button>
               </div>
             </div>
           </div>
