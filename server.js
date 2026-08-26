@@ -930,24 +930,25 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
     const combinedText = `[음성 전사]\n${audioText}\n\n[화면 자막/텍스트 (OCR: Tesseract${verifications.length ? " + GPT-4o 검증" : ""})]\n${captionText}`;
 
     const t3 = Date.now();
-    // 종합 판정(음성+자막)과 자막 단독 판정을 동시에 구해서, 마케터가 팝업에서
-    // "종합/음성/자막" 탭으로 나눠 볼 수 있게 한다. 음성 단독 판정은 1단계에서
-    // 이미 계산해둔 것을 그대로 쓴다(중복 호출 방지).
-    const [combinedReview, captionReview] = await Promise.all([
-      reviewAgainstGuidelines(combinedText, campaign),
-      ocrSummary
-        ? reviewAgainstGuidelines(`[화면 자막/텍스트]\n${captionText}`, campaign)
-        : Promise.resolve({
-            result: "반려",
-            brandMentioned: false,
-            productMentioned: false,
-            matchedUsps: [],
-            missingUsps: campaign.usps || [],
-            violatedBans: [],
-            feedback: "화면에서 인식된 자막이 없습니다.",
-            occurrences: [],
-          }),
-    ]);
+    // 종합 판정(음성+자막)과 자막 단독 판정을 순차로 구한다. 직전 비전 검증
+    // 호출들로 분당 토큰 한도가 거의 소진된 상태라, 큰 요청 2개를 동시에
+    // 쏘면(Promise.all) 예산이 회복될 새 없이 둘 다 429로 실패해 자막 검수
+    // 전체가 무산되는 사례가 있었다 — 순차 실행으로 순간 최대 요청량을
+    // 절반으로 줄인다. 음성 단독 판정은 1단계에서 이미 계산해둔 것을 그대로
+    // 쓴다(중복 호출 방지).
+    const combinedReview = await reviewAgainstGuidelines(combinedText, campaign);
+    const captionReview = ocrSummary
+      ? await reviewAgainstGuidelines(`[화면 자막/텍스트]\n${captionText}`, campaign)
+      : {
+          result: "반려",
+          brandMentioned: false,
+          productMentioned: false,
+          matchedUsps: [],
+          missingUsps: campaign.usps || [],
+          violatedBans: [],
+          feedback: "화면에서 인식된 자막이 없습니다.",
+          occurrences: [],
+        };
     timings.finalReviewMs = Date.now() - t3;
     timings.totalMs = Date.now() - t0;
 
