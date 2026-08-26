@@ -587,13 +587,36 @@ function fuzzyContains(text, phrase, maxRatio = 0.3) {
   return false;
 }
 
+/* 릴스 자막은 보통 같은 문구가 여러 프레임에 걸쳐 그대로 유지된다 — 그런
+ * 프레임을 전부 따로 검증하면 사실상 같은 걸 여러 번 확인하는 셈이라
+ * 낭비다. 텍스트가 사실상 동일한 프레임은 하나만 남긴다. */
+function dedupeByText(frames) {
+  const seen = [];
+  const out = [];
+  for (const f of frames) {
+    const norm = (f.text || "").replace(/\s+/g, "");
+    if (!norm) {
+      out.push(f);
+      continue;
+    }
+    const isDup = seen.some(
+      (s) => s === norm || levenshtein(s, norm) <= Math.max(1, Math.floor(norm.length * 0.15)),
+    );
+    if (isDup) continue;
+    seen.push(norm);
+    out.push(f);
+  }
+  return out;
+}
+
 /* 1차 필터: 금칙어 의심 단어가 걸렸거나, Tesseract 신뢰도가 낮아 오인식이 의심되는
  * 프레임을 골라낸다. 금칙어 의심은 실제 위반 신호라 전부 검증하지만, 단순 저신뢰
  * (영상 자체가 인식하기 어려워서 그런 경우가 대부분)는 상위 몇 개로만 제한한다 —
  * 안 그러면 프레임 대부분이 여기 걸리는 영상에서 GPT-4o Vision 호출이 한꺼번에
  * 몰려 계정 분당 토큰 한도(TPM)를 넘어버리고, 그러면 동시 호출 수를 줄이거나
- * 재시도를 늘려도 소용이 없다(전체 요청량 자체가 한도를 넘기 때문). */
-const MAX_LOW_CONFIDENCE_VERIFY = 15;
+ * 재시도를 늘려도 소용이 없다(전체 요청량 자체가 한도를 넘기 때문). 중복 제거로
+ * 확보한 여유는 해상도(정확도)를 올리는 데 쓴다 — verifySuspiciousVision 참고. */
+const MAX_LOW_CONFIDENCE_VERIFY = 8;
 
 function findSuspiciousFrames(zipped, bans) {
   const cleanBans = (bans || []).filter(Boolean);
@@ -607,14 +630,15 @@ function findSuspiciousFrames(zipped, bans) {
       lowConfidence.push(r);
     }
   }
-  lowConfidence.sort((a, b) => a.confidence - b.confidence);
-  const capped = lowConfidence.slice(0, MAX_LOW_CONFIDENCE_VERIFY);
-  if (lowConfidence.length > capped.length) {
+  const dedupedBans = dedupeByText(banMatches);
+  const dedupedLow = dedupeByText(lowConfidence).sort((a, b) => a.confidence - b.confidence);
+  const capped = dedupedLow.slice(0, MAX_LOW_CONFIDENCE_VERIFY);
+  if (dedupedLow.length > capped.length) {
     console.warn(
-      `[자막 검수] 저신뢰 프레임 ${lowConfidence.length}개 중 ${capped.length}개만 정밀검증 (나머지는 건너뜀)`,
+      `[자막 검수] 저신뢰 프레임 ${dedupedLow.length}개(중복 제거 후) 중 ${capped.length}개만 정밀검증 (나머지는 건너뜀)`,
     );
   }
-  return [...banMatches, ...capped];
+  return [...dedupedBans, ...capped];
 }
 
 /* 2차 정밀검증: 의심 프레임만 GPT-4o 비전으로 보내 오탈자/오인식인지 실제 위반인지 판정한다. */
@@ -642,11 +666,11 @@ async function verifySuspiciousVision(frames, bans) {
               role: "user",
               content: [
                 { type: "text", text: prompt },
-                // detail:"low"는 이미지 1장당 토큰을 고정 85개로 묶어준다(기본값 auto/high는
-                // 해상도에 비례해 최대 10배 이상 더 쓴다). Tesseract가 이미 후보 텍스트를
-                // 뽑아준 상태에서 이를 확인하는 용도라, 약간의 판독력 저하를 감수하고
-                // 계정 분당 토큰 한도(TPM)를 안 넘기는 쪽을 우선한다.
-                { type: "image_url", image_url: { url: f.dataUrl, detail: "low" } },
+                // detail:"low"로 토큰을 아끼려 했더니 "브리지"→"브리저"처럼 오인식이
+                // 늘어 오히려 엉뚱한 위반 판정을 만들었다. 대신 중복 프레임 제거 +
+                // 검증 상한 축소(findSuspiciousFrames)로 요청 수 자체를 줄여서
+                // 예산을 확보하고, 해상도는 기본값(auto)으로 되돌려 판독력을 살린다.
+                { type: "image_url", image_url: { url: f.dataUrl } },
               ],
             },
           ],
