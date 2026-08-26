@@ -63,6 +63,17 @@ function isUploadEligible(inf) {
   return inf.marketerResult === "통과";
 }
 
+// 서버가 넘겨주는 "검수완료"는 AI 파이프라인이 끝났다는 뜻일 뿐, 마케터가
+// 최종 판정을 내렸는지는 별개다 — 마케터 판정 여부에 따라 "AI 검수완료"와
+// "최종 검수완료"로 구분해서 보여준다. 그 외 상태(업로드 중/검수 중/미제출
+// 등)는 그대로 노출한다.
+function submissionStatusLabel(inf) {
+  if (inf.status === "검수완료") {
+    return inf.marketerResult ? "최종 검수완료" : "AI 검수완료";
+  }
+  return inf.status;
+}
+
 const OCCURRENCE_TYPE_LABEL = {
   brand: "브랜드",
   product: "제품",
@@ -153,7 +164,6 @@ function App() {
               return Array.isArray(infRows)
                 ? infRows.map((inf) => ({
                     id: inf.id,
-                    name: inf.name,
                     handle: inf.handle,
                     status: inf.status,
                     result: inf.result,
@@ -278,8 +288,8 @@ function App() {
   // 📥 마케터용 샘플 엑셀 파일 즉시 생성 및 다운로드
   const handleDownloadSample = () => {
     const data = [
-      { 이름: "홍길동", 핸들: "@hong_vlog" },
-      { 이름: "박리뷰", 핸들: "@park_vlog" },
+      { 핸들: "@hong_vlog" },
+      { 핸들: "@park_vlog" },
     ];
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -301,10 +311,7 @@ function App() {
       const workbook = XLSX.read(evt.target.result, { type: "binary" });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rawData = XLSX.utils.sheet_to_json(sheet);
-      const formatted = rawData.map((item, idx) => ({
-        name: (item["이름"] || item["name"] || `인플루언서_${idx + 1}`)
-          .toString()
-          .trim(),
+      const formatted = rawData.map((item) => ({
         handle: (item["핸들"] || item["handle"] || "@unknown")
           .toString()
           .trim(),
@@ -325,7 +332,6 @@ function App() {
         setInfluencers(
           rows.map((row) => ({
             id: row.id,
-            name: row.name,
             handle: row.handle,
             status: row.status,
             result: row.result,
@@ -814,25 +820,21 @@ function App() {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>인플루언서 정보</th>
+                    <th>No.</th>
+                    <th>인플루언서 계정 핸들</th>
                     <th>제출 상태</th>
                     <th>AI 판정</th>
                     <th>마케터 판정</th>
                     <th>업로드 가능여부</th>
-                    <th>작업</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {influencers.map((inf) => (
+                  {influencers.map((inf, idx) => (
                     <tr key={inf.id}>
+                      <td>{idx + 1}</td>
+                      <td>{inf.handle}</td>
                       <td>
-                        <div style={{ fontWeight: 600 }}>{inf.name}</div>
-                        <div style={{ fontSize: "11px", color: "var(--mute)" }}>
-                          {inf.handle}
-                        </div>
-                      </td>
-                      <td>
-                        {inf.status}
+                        {submissionStatusLabel(inf)}
                         {inf.status?.includes("(음성)") && (
                           <div className="ocr-pending">
                             <span className="dot" />
@@ -889,25 +891,13 @@ function App() {
                             }
                           }}
                         >
-                          {inf.marketerResult || "-"}
+                          {inf.marketerResult || "검토하기"}
                         </span>
                       </td>
                       <td>
                         <span className={`st ${isUploadEligible(inf) ? "pass" : "block"}`}>
                           {isUploadEligible(inf) ? "O" : "X"}
                         </span>
-                      </td>
-                      <td>
-                        <button
-                          className="btn sm"
-                          onClick={() => {
-                            setFeedbackMode("edit");
-                            setSelectedInf(inf);
-                            setFeedbackText(inf.feedback || "");
-                          }}
-                        >
-                          상세 피드백
-                        </button>
                       </td>
                     </tr>
                   ))}
@@ -937,7 +927,8 @@ function App() {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>인플루언서 정보</th>
+                  <th>No.</th>
+                  <th>인플루언서 계정 핸들</th>
                   <th>제출 상태</th>
                   <th>AI 판정</th>
                   <th>마케터 판정</th>
@@ -946,16 +937,12 @@ function App() {
                 </tr>
               </thead>
               <tbody>
-                {influencers.map((inf) => (
+                {influencers.map((inf, idx) => (
                   <tr key={inf.id}>
+                    <td>{idx + 1}</td>
+                    <td>{inf.handle}</td>
                     <td>
-                      <div style={{ fontWeight: 600 }}>{inf.name}</div>
-                      <div style={{ fontSize: "11px", color: "var(--mute)" }}>
-                        {inf.handle}
-                      </div>
-                    </td>
-                    <td>
-                      {inf.status}
+                      {submissionStatusLabel(inf)}
                       {inf.status?.includes("(음성)") && (
                         <div className="ocr-pending">
                           <span className="dot" />
@@ -1055,6 +1042,10 @@ function App() {
           const modalInf =
             influencers.find((i) => i.id === selectedInf.id) || selectedInf;
           const isView = feedbackMode === "view";
+          // 피드백 기입/반려·통과 버튼은 마케터 화면에서만 노출한다 — 인플루언서
+          // 업로드 화면에서 마케터 판정 배지를 눌러도 결과를 읽기만 할 수 있고
+          // 직접 판정을 내릴 수는 없다.
+          const canEditVerdict = !isView && role === "marketer";
           const rootReview =
             modalInf.review && !modalInf.review.error ? modalInf.review : null;
           // 이전 버전(음성/자막 분리 전)에 저장된 검수 결과는 audio/caption 필드가
@@ -1101,8 +1092,10 @@ function App() {
             >
               <h3>
                 {isView
-                  ? `${modalInf.name} ${modalInf.result === "통과" ? "통과" : "반려"} 사유`
-                  : `${modalInf.name} 피드백 작성`}
+                  ? `${modalInf.handle} ${modalInf.result === "통과" ? "통과" : "반려"} 사유`
+                  : canEditVerdict
+                    ? `${modalInf.handle} 피드백 작성`
+                    : `${modalInf.handle} 코멘트 확인`}
               </h3>
               {modalInf.status?.includes("(음성)") && (
                 <div className="ocr-pending" style={{ marginBottom: "10px" }}>
@@ -1259,7 +1252,7 @@ function App() {
               {/* 탭이 있으면(종합/음성/자막) 각 탭 안에 이미 그 탭 기준 피드백이
                   나와있어서, 여기서 또 종합 기준 피드백을 고정으로 보여주면
                   탭 내용과 달라 보여 혼란스럽다 — 탭이 있을 때는 생략한다. */}
-              {isView && !hasSplitReview && (
+              {((isView && !hasSplitReview) || (!isView && !canEditVerdict)) && (
                 <div
                   className="in"
                   style={{
@@ -1270,10 +1263,18 @@ function App() {
                     background: "#FBFCFA",
                   }}
                 >
+                  {!isView && (
+                    <div style={{ fontSize: "12px", marginBottom: "6px" }}>
+                      마케터 판정:{" "}
+                      <b style={{ color: modalInf.marketerResult === "통과" ? "#4CAF50" : modalInf.marketerResult === "반려" ? "var(--block)" : "var(--mute)" }}>
+                        {modalInf.marketerResult || "-"}
+                      </b>
+                    </div>
+                  )}
                   {modalInf.feedback || "등록된 반려 사유가 없습니다."}
                 </div>
               )}
-              {!isView && (
+              {canEditVerdict && (
                 <>
                   <div style={{ fontSize: "12px", marginBottom: "6px" }}>
                     마케터 판정:{" "}
@@ -1298,7 +1299,7 @@ function App() {
                   justifyContent: "flex-end",
                 }}
               >
-                {!isView && (
+                {canEditVerdict && (
                   <>
                     <button
                       className="btn"

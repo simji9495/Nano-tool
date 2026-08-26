@@ -923,7 +923,9 @@ app.post("/api/campaigns/:id/influencers/bulk", requireSupabase, async (req, res
 
   const rows = list.map((inf) => ({
     campaign_id: campaignId,
-    name: inf.name,
+    // 이름은 더 이상 수집하지 않는다 — name 컬럼이 NOT NULL 제약을 가질 수
+    // 있어 안전하게 핸들로 대체한다(화면에는 노출되지 않음).
+    name: inf.name || inf.handle || "",
     handle: inf.handle,
     status: "미제출",
     result: "-",
