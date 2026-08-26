@@ -81,10 +81,15 @@ export default function CampaignSettings({ campaign, setCampaign, onSave }) {
                     자주 쓰는 금칙은 아래 버튼으로 빠르게 추가하세요. 그 외 개념적인 금지 사항(예: "자극감 언급")은 아래 입력란에 직접 적으면 문맥을 고려해 검수합니다 — "화한 느낌"은 찾아내지만 "화한 느낌 없이"처럼 부정된 표현은 위반으로 보지 않습니다.
                 </div>
                 {!showCompetitor && (
-                    <button type="button" onClick={() => setCompetitorOpen(true)}
-                        style={{ background: '#FF9800', border: 'none', color: '#FFF', borderRadius: '999px', padding: '6px 14px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', marginBottom: '10px', boxShadow: '0 1px 3px rgba(255,152,0,0.4)' }}>
-                        🏷️ 자주 쓰는 항목 추가: 경쟁 브랜드 언급
-                    </button>
+                    <div style={{ marginBottom: '10px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 700, color: '#FF9800', letterSpacing: '0.02em', marginBottom: '4px' }}>
+                            자주 쓰는 항목 추가
+                        </div>
+                        <button type="button" onClick={() => setCompetitorOpen(true)}
+                            style={{ background: '#FF9800', border: 'none', color: '#FFF', borderRadius: '999px', padding: '6px 14px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', boxShadow: '0 1px 3px rgba(255,152,0,0.4)' }}>
+                            🏷️ 경쟁 브랜드 언급
+                        </button>
+                    </div>
                 )}
                 {showCompetitor && (
                     <div style={{ marginBottom: '12px', paddingLeft: '10px', borderLeft: '2px solid var(--block)' }}>

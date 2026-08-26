@@ -944,7 +944,7 @@ app.get("/api/influencers/:id", requireSupabase, async (req, res) => {
 });
 
 app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
-  const { status, result, feedback, videoName, transcript, review } = req.body || {};
+  const { status, result, feedback, videoName, transcript, review, marketerResult } = req.body || {};
   const patch = {};
   if (status !== undefined) patch.status = status;
   if (result !== undefined) patch.result = result;
@@ -952,6 +952,7 @@ app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
   if (videoName !== undefined) patch.video_name = videoName;
   if (transcript !== undefined) patch.transcript = transcript;
   if (review !== undefined) patch.review = review;
+  if (marketerResult !== undefined) patch.marketer_result = marketerResult;
 
   const { data, error } = await supabase
     .from("reelcheck_influencers")

@@ -56,6 +56,14 @@ function formatTimestamp(sec) {
   return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
 }
 
+// AI 판정이 틀릴 수 있으니, 마케터가 명시적으로 판정을 내리면(통과/반려) 그게
+// AI 판정보다 우선한다 — 마케터가 아직 판정을 안 내렸으면 AI 판정을 그대로 따른다.
+function isUploadEligible(inf) {
+  if (inf.marketerResult === "통과") return true;
+  if (inf.marketerResult === "반려") return false;
+  return inf.result === "통과";
+}
+
 const OCCURRENCE_TYPE_LABEL = {
   brand: "브랜드",
   product: "제품",
@@ -150,6 +158,7 @@ function App() {
                     handle: inf.handle,
                     status: inf.status,
                     result: inf.result,
+                    marketerResult: inf.marketer_result || null,
                     feedback: inf.feedback || "",
                     videoName: inf.video_name || undefined,
                     transcript: inf.transcript || undefined,
@@ -481,6 +490,37 @@ function App() {
     }
   };
 
+  // 마케터가 상세 피드백 팝업에서 통과/반려를 직접 확정하거나 코멘트만 저장할 때 호출.
+  // AI 판정이 틀릴 수 있어 마케터 판정을 별도로 기록해두고(업로드 가능여부는
+  // isUploadEligible이 이 값을 AI 판정보다 우선한다), 서버(Supabase)에도 반영해야
+  // 새로고침하거나 다른 기기에서 봐도 유지된다.
+  const saveMarketerFeedback = async (id, patch) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/influencers/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "저장에 실패했습니다.");
+      setInfluencers((prev) =>
+        prev.map((inf) =>
+          inf.id === id
+            ? {
+                ...inf,
+                ...(patch.feedback !== undefined ? { feedback: patch.feedback } : {}),
+                ...(patch.marketerResult !== undefined ? { marketerResult: patch.marketerResult } : {}),
+              }
+            : inf,
+        ),
+      );
+      return true;
+    } catch (err) {
+      alert(`❌ 저장 실패: ${err.message}`);
+      return false;
+    }
+  };
+
   return (
     <div>
       {/* 상단 바 */}
@@ -778,6 +818,8 @@ function App() {
                     <th>인플루언서 정보</th>
                     <th>제출 상태</th>
                     <th>AI 판정</th>
+                    <th>마케터 판정</th>
+                    <th>업로드 가능여부</th>
                     <th>작업</th>
                   </tr>
                 </thead>
@@ -828,6 +870,35 @@ function App() {
                         </span>
                       </td>
                       <td>
+                        <span
+                          className={`st ${inf.marketerResult === "통과" ? "pass" : !inf.marketerResult ? "none" : "block"}`}
+                          role="button"
+                          tabIndex={0}
+                          title="마케터 판정 내리기/확인"
+                          style={{ cursor: "pointer" }}
+                          onClick={() => {
+                            setFeedbackMode("edit");
+                            setSelectedInf(inf);
+                            setFeedbackText(inf.feedback || "");
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setFeedbackMode("edit");
+                              setSelectedInf(inf);
+                              setFeedbackText(inf.feedback || "");
+                            }
+                          }}
+                        >
+                          {inf.marketerResult || "-"}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`st ${isUploadEligible(inf) ? "pass" : "block"}`}>
+                          {isUploadEligible(inf) ? "O" : "X"}
+                        </span>
+                      </td>
+                      <td>
                         <button
                           className="btn sm"
                           onClick={() => {
@@ -869,7 +940,9 @@ function App() {
                 <tr>
                   <th>인플루언서 정보</th>
                   <th>제출 상태</th>
-                  <th>검수 상태</th>
+                  <th>AI 판정</th>
+                  <th>마케터 판정</th>
+                  <th>업로드 가능여부</th>
                   <th>영상 파일 업로드</th>
                 </tr>
               </thead>
@@ -917,6 +990,35 @@ function App() {
                         }}
                       >
                         {inf.result}
+                      </span>
+                    </td>
+                    <td>
+                      <span
+                        className={`st ${inf.marketerResult === "통과" ? "pass" : !inf.marketerResult ? "none" : "block"}`}
+                        role="button"
+                        tabIndex={0}
+                        title="마케터 판정 내리기/확인"
+                        style={{ cursor: "pointer" }}
+                        onClick={() => {
+                          setFeedbackMode("edit");
+                          setSelectedInf(inf);
+                          setFeedbackText(inf.feedback || "");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setFeedbackMode("edit");
+                            setSelectedInf(inf);
+                            setFeedbackText(inf.feedback || "");
+                          }
+                        }}
+                      >
+                        {inf.marketerResult || "-"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`st ${isUploadEligible(inf) ? "pass" : "block"}`}>
+                        {isUploadEligible(inf) ? "O" : "X"}
                       </span>
                     </td>
                     <td>
@@ -1173,12 +1275,22 @@ function App() {
                 </div>
               )}
               {!isView && (
-                <textarea
-                  className="in"
-                  style={{ height: "80px", marginBottom: "12px" }}
-                  value={feedbackText}
-                  onChange={(e) => setFeedbackText(e.target.value)}
-                />
+                <>
+                  <div style={{ fontSize: "12px", marginBottom: "6px" }}>
+                    마케터 판정:{" "}
+                    <b style={{ color: modalInf.marketerResult === "통과" ? "#4CAF50" : modalInf.marketerResult === "반려" ? "var(--block)" : "var(--mute)" }}>
+                      {modalInf.marketerResult || "-"}
+                    </b>
+                    {" "}(AI 판정보다 우선 적용됩니다 — 업로드 가능여부를 직접 결정합니다)
+                  </div>
+                  <textarea
+                    className="in"
+                    placeholder="반려 사유를 남기면 인플루언서/담당자가 확인할 수 있습니다."
+                    style={{ height: "80px", marginBottom: "12px" }}
+                    value={feedbackText}
+                    onChange={(e) => setFeedbackText(e.target.value)}
+                  />
+                </>
               )}
               <div
                 style={{
@@ -1195,25 +1307,47 @@ function App() {
                   닫기
                 </button>
                 {!isView && (
-                  <button
-                    className="btn stamp"
-                    onClick={() => {
-                      setInfluencers((prev) =>
-                        prev.map((i) =>
-                          i.id === modalInf.id
-                            ? {
-                                ...i,
-                                feedback: feedbackText,
-                                status: "피드백완료",
-                              }
-                            : i,
-                        ),
-                      );
-                      setSelectedInf(null);
-                    }}
-                  >
-                    저장
-                  </button>
+                  <>
+                    <button
+                      className="btn"
+                      style={{ backgroundColor: "var(--block)" }}
+                      onClick={async () => {
+                        if (!feedbackText.trim()) {
+                          alert("반려 사유를 입력해주세요.");
+                          return;
+                        }
+                        const ok = await saveMarketerFeedback(modalInf.id, {
+                          marketerResult: "반려",
+                          feedback: feedbackText,
+                        });
+                        if (ok) setSelectedInf(null);
+                      }}
+                    >
+                      반려
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ backgroundColor: "#4CAF50" }}
+                      onClick={async () => {
+                        const ok = await saveMarketerFeedback(modalInf.id, {
+                          marketerResult: "통과",
+                          feedback: feedbackText,
+                        });
+                        if (ok) setSelectedInf(null);
+                      }}
+                    >
+                      통과
+                    </button>
+                    <button
+                      className="btn stamp"
+                      onClick={async () => {
+                        const ok = await saveMarketerFeedback(modalInf.id, { feedback: feedbackText });
+                        if (ok) setSelectedInf(null);
+                      }}
+                    >
+                      코멘트만 저장
+                    </button>
+                  </>
                 )}
               </div>
             </div>
