@@ -6,7 +6,7 @@ export default function LandingPage({ onGetStarted }) {
       <header className="lp-bar">
         <span className="logo">
           <span className="mark" />
-          <span className="word">InSense</span>
+          <span className="word">InCensor</span>
         </span>
         <span className="spacer" />
         <nav className="lp-nav">
@@ -200,7 +200,7 @@ export default function LandingPage({ onGetStarted }) {
       </div>
 
       <footer>
-        <span>© 2026 InSense</span>
+        <span>© 2026 InCensor</span>
         <div className="links">
           <a href="#faq">이용약관</a>
           <a href="#faq">개인정보처리방침</a>

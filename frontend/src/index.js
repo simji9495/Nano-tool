@@ -581,11 +581,11 @@ function App() {
           <button className="logo" onClick={() => setScreen("landing")}>
             <span className="mark" />
             <span className="word">
-              In<em>Sense</em>
+              In<em>Censor</em>
             </span>
           </button>
           <span className="spacer" />
-          <span className="bar-sub">AI-powered Influencer Content Guardrail</span>
+          <span className="bar-sub">인플루언서 콘텐츠 1차 검수 솔루션</span>
         </div>
         <div className="home-body">
           <div className="eyebrow">Get started</div>
@@ -626,7 +626,7 @@ function App() {
         <button className="logo" onClick={() => setScreen("landing")}>
           <span className="mark" />
           <span className="word">
-            In<em>Sense</em>
+            In<em>Censor</em>
           </span>
         </button>
         <span className="spacer" />
