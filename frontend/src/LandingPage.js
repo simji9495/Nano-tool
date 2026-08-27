@@ -1,13 +1,11 @@
 import React from "react";
+import Logo from "./Logo";
 
 export default function LandingPage({ onGetStarted }) {
   return (
     <div className="landing">
       <header className="lp-bar">
-        <span className="logo">
-          <span className="mark" />
-          <span className="word">InCensor</span>
-        </span>
+        <Logo />
         <span className="spacer" />
         <nav className="lp-nav">
           <a href="#how">작동 방식</a>

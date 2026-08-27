@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import CampaignSettings from "./CampaignSettings";
 import CampaignCreate, { formatCampaignPeriod } from "./CampaignCreate";
 import LandingPage from "./LandingPage";
+import Logo from "./Logo";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8787";
 const STORAGE_KEY = "reelcheck_campaigns_v1";
@@ -578,12 +579,7 @@ function App() {
     return (
       <div className="home">
         <div className="bar">
-          <button className="logo" onClick={() => setScreen("landing")}>
-            <span className="mark" />
-            <span className="word">
-              In<em>Censor</em>
-            </span>
-          </button>
+          <Logo onClick={() => setScreen("landing")} />
           <span className="spacer" />
           <span className="bar-sub">인플루언서 콘텐츠 1차 검수 솔루션</span>
         </div>
@@ -623,12 +619,7 @@ function App() {
     <div>
       {/* 상단 바 */}
       <div className="bar">
-        <button className="logo" onClick={() => setScreen("landing")}>
-          <span className="mark" />
-          <span className="word">
-            In<em>Censor</em>
-          </span>
-        </button>
+        <Logo onClick={() => setScreen("landing")} />
         <span className="spacer" />
         <div className="roles">
           <button

@@ -26,11 +26,9 @@
 
         /* ── 상단 바 + 로고 ─────────────────────────────────── */
         .bar { position:sticky; top:0; z-index:40; display:flex; align-items:center; gap:18px; padding:0 24px; height:64px; background:var(--paper); border-bottom:1px solid var(--line); }
-        .logo { display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; border:none; background:transparent; padding:0; }
-        .logo .mark { width:20px; height:20px; border-radius:50%; border:2.3px solid var(--ink); position:relative; flex:none; margin-right:2px; }
-        .logo .mark::after { content:""; position:absolute; width:9px; height:2.3px; border-radius:2px; background:var(--ink); right:-6px; bottom:-2px; transform:rotate(45deg); transform-origin:left center; }
+        .logo { display:inline-flex; align-items:center; gap:9px; cursor:pointer; user-select:none; border:none; background:transparent; padding:0; }
+        .logo .mark { width:21px; height:29px; color:var(--ink); flex:none; }
         .logo .word { font-size:19px; font-weight:800; letter-spacing:-0.03em; color:var(--ink); }
-        .logo .word em { font-style:normal; color:var(--mute); font-weight:700; }
         .bar-sub { font-size:11px; letter-spacing:.02em; color:var(--mute); }
         .spacer { flex:1; }
         .roles { display:flex; gap:3px; background:var(--pill); padding:3px; border-radius:999px; }
