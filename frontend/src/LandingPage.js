@@ -69,32 +69,32 @@ export default function LandingPage({ onGetStarted }) {
             <div className="rows">
               <div className="row head">
                 <span>인플루언서</span>
-                <span>제출</span>
+                <span>제출 상태</span>
                 <span>AI 판정</span>
               </div>
               <div className="row">
-                <span>김지원 · @beauty_jiwon</span>
+                <span>@beauty_jiwon</span>
                 <span style={{ color: "var(--mute)" }}>완료</span>
                 <span>
                   <span className="st pass">통과</span>
                 </span>
               </div>
               <div className="row">
-                <span>박서연 · @daily_seoyeon</span>
+                <span>@daily_seoyeon</span>
                 <span style={{ color: "var(--mute)" }}>완료</span>
                 <span>
                   <span className="st block">반려</span>
                 </span>
               </div>
               <div className="row">
-                <span>이하늘 · @haneul.log</span>
+                <span>@haneul.log</span>
                 <span style={{ color: "var(--mute)" }}>완료</span>
                 <span>
                   <span className="st none">자막 검수 중</span>
                 </span>
               </div>
               <div className="row">
-                <span>정민아 · @mina_daily</span>
+                <span>@mina_daily</span>
                 <span style={{ color: "var(--mute)" }}>미제출</span>
                 <span style={{ color: "var(--mute)" }}>—</span>
               </div>
@@ -145,8 +145,38 @@ export default function LandingPage({ onGetStarted }) {
                 캠페인을 만들고 가이드라인을 저장한 뒤, 명단을 엑셀로 한 번에
                 등록합니다. 통과·반려·대기 현황이 실시간으로 집계됩니다.
               </p>
-              <div className="shot">
-                <span>marketer dashboard</span>
+              <div className="panel">
+                <div className="panel-hd">캠페인 목록 · 워터슬림 크림 시딩</div>
+                <table className="mini-table">
+                  <thead>
+                    <tr>
+                      <th>핸들</th>
+                      <th>제출 상태</th>
+                      <th>AI 판정</th>
+                      <th>마케터 판정</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>@beauty_jiwon</td>
+                      <td style={{ color: "var(--mute)" }}>완료</td>
+                      <td><span className="st pass">통과</span></td>
+                      <td><span className="st pass">통과</span></td>
+                    </tr>
+                    <tr>
+                      <td>@daily_seoyeon</td>
+                      <td style={{ color: "var(--mute)" }}>완료</td>
+                      <td><span className="st block">반려</span></td>
+                      <td><span className="st block">반려</span></td>
+                    </tr>
+                    <tr>
+                      <td>@haneul.log</td>
+                      <td style={{ color: "var(--mute)" }}>완료</td>
+                      <td><span className="st none">자막 검수 중</span></td>
+                      <td><span className="st none">-</span></td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
             <div>
@@ -156,8 +186,29 @@ export default function LandingPage({ onGetStarted }) {
                 별도 가입 없이 캠페인 링크에서 인플루언서 행에 영상을 올리면
                 검수가 시작되고, 반려 사유를 바로 확인할 수 있습니다.
               </p>
-              <div className="shot">
-                <span>upload screen</span>
+              <div className="panel">
+                <div className="panel-hd">캠페인 선택 · 워터슬림 크림 시딩</div>
+                <div className="mini-upload">
+                  <div className="mini-upload-row">
+                    <span>@beauty_jiwon</span>
+                    <span className="mini-upload-track">
+                      <span className="mini-upload-fill" style={{ width: "100%" }} />
+                    </span>
+                    <span className="st pass">완료</span>
+                  </div>
+                  <div className="mini-upload-row">
+                    <span>@daily_seoyeon</span>
+                    <span className="mini-upload-track">
+                      <span className="mini-upload-fill" style={{ width: "64%" }} />
+                    </span>
+                    <span style={{ color: "var(--mute)" }}>64%</span>
+                  </div>
+                  <div className="mini-upload-row">
+                    <span>@haneul.log</span>
+                    <span className="mini-upload-btn">파일 선택</span>
+                    <span style={{ color: "var(--mute)" }}>대기</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -127,7 +127,6 @@
         .landing .band { width:100%; }
         .landing .band.cool { background:var(--band-cool); border-top:1px solid var(--band-cool-line); border-bottom:1px solid var(--band-cool-line); }
         .landing .band.cool .duo > div { background:#fff; border-color:var(--band-cool-line); }
-        .landing .band.cool .shot { background:repeating-linear-gradient(135deg,#fff 0 9px,var(--band-cool-line) 9px 18px); }
         .landing .lp-bar { position:sticky; top:0; z-index:40; display:flex; align-items:center; gap:18px; height:64px; padding:0 40px; background:rgba(255,255,255,.92); backdrop-filter:blur(8px); border-bottom:1px solid var(--line); }
         .landing .lp-nav { display:flex; gap:22px; font-size:13px; font-weight:600; color:var(--graphite); }
         .landing .lp-nav a:hover { color:var(--ink); }
@@ -160,8 +159,16 @@
         .landing .duo > div { border:1px solid var(--line); border-radius:22px; padding:28px; background:var(--card); }
         .landing .duo h3 { margin:10px 0; font-size:20px; font-weight:800; letter-spacing:-.02em; }
         .landing .duo p { margin-bottom:18px; font-size:13.5px; line-height:1.8; color:var(--graphite); }
-        .landing .shot { height:150px; border-radius:14px; display:flex; align-items:center; justify-content:center; background:repeating-linear-gradient(135deg,#F2F1EE 0 9px,#EAE9E5 9px 18px); }
-        .landing .shot span { font:500 11px ui-monospace,Menlo,monospace; color:var(--mute); background:#fff; padding:6px 12px; border-radius:6px; }
+        .landing .duo .panel-hd { font-size:11.5px; padding:12px 16px; }
+        .landing .mini-table { width:100%; border-collapse:collapse; font-size:11.5px; }
+        .landing .mini-table th { text-align:left; font-weight:700; color:var(--mute); font-size:10px; padding:10px 16px 8px; border-bottom:1px solid var(--line2); }
+        .landing .mini-table td { padding:9px 16px; border-bottom:1px solid var(--line2); white-space:nowrap; }
+        .landing .mini-table tr:last-child td { border-bottom:none; }
+        .landing .mini-upload { padding:14px 18px 18px; display:flex; flex-direction:column; gap:13px; }
+        .landing .mini-upload-row { display:grid; grid-template-columns:1.1fr 1.3fr .7fr; align-items:center; gap:10px; font-size:11.5px; }
+        .landing .mini-upload-track { width:100%; height:6px; border-radius:999px; background:var(--pill); overflow:hidden; }
+        .landing .mini-upload-fill { height:100%; border-radius:999px; background:var(--ink); }
+        .landing .mini-upload-btn { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:4px 10px; font-size:10px; color:var(--graphite); white-space:nowrap; }
         .landing .faq { display:grid; grid-template-columns:.8fr 1.2fr; gap:40px; }
         .landing .faq h2 { font-size:26px; font-weight:800; letter-spacing:-.025em; }
         .landing .faq .list { border-top:1px solid var(--line); }
