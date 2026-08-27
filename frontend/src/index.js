@@ -228,13 +228,11 @@ function App() {
         );
         if (cancelled) return;
 
+        // 캠페인 목록도 서버가 원본이다 — Supabase에서 직접 삭제한 캠페인이
+        // 로컬 캐시(localStorage)에 남아 되살아나지 않도록, 응답이 오면
+        // 로컬에만 있던 캠페인은 유지하지 않고 서버 목록으로 완전히 교체한다.
         const mapped = rows.map((row, i) => mapApiCampaign(row, influencerLists[i]));
-        if (!mapped.length) return;
-        setCampaigns((prev) => {
-          const remoteIds = new Set(mapped.map((c) => c.id));
-          const localsOnly = prev.filter((c) => !remoteIds.has(c.id));
-          return [...mapped, ...localsOnly];
-        });
+        setCampaigns(mapped);
       } catch {
         /* 로컬 저장소만 사용 */
       }
@@ -298,30 +296,17 @@ function App() {
   };
 
   const handleCreateCampaign = async (payload) => {
-    const localId =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `c_${Date.now()}`;
-    let created = {
-      id: localId,
-      ...payload,
-      ...defaultGuidelines,
-      influencers: [],
-    };
-
-    try {
-      const res = await fetch(`${API_BASE}/api/campaigns`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        const row = await res.json();
-        created = mapApiCampaign(row, []);
-      }
-    } catch {
-      /* 서버 없이도 로컬에서 캠페인 운영 */
+    const res = await fetch(`${API_BASE}/api/campaigns`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "캠페인 생성에 실패했습니다.");
     }
+    const row = await res.json();
+    const created = mapApiCampaign(row, []);
 
     setCampaigns((prev) => [created, ...prev]);
     setSelectedCampaignId(created.id);
