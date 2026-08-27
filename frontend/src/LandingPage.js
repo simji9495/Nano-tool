@@ -248,8 +248,9 @@ export default function LandingPage({ onGetStarted }) {
             <div>
               <h2>시딩 캠페인을 운영 중이신가요?</h2>
               <p>
-                수백 개의 영상, 직접 검토하지 마세요. 가이드라인과 영상 몇
-                개만 있으면 AI가 1차 검수를 대신해줍니다.
+                수백 개의 영상, 직접 검토하지 마세요.
+                <br />
+                가이드라인과 영상 몇 개만 있으면 AI가 1차 검수를 대신해줍니다.
               </p>
             </div>
             <button
