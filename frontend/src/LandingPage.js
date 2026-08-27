@@ -17,7 +17,8 @@ export default function LandingPage({ onGetStarted }) {
         </button>
       </header>
 
-      <div className="lp-wrap">
+      <div className="band cool">
+        <div className="lp-wrap">
         <section className="hero">
           <div>
             <div className="tag">음성 + 화면 자막 동시 검수</div>
@@ -100,7 +101,10 @@ export default function LandingPage({ onGetStarted }) {
             </div>
           </div>
         </section>
+        </div>
+      </div>
 
+      <div className="lp-wrap">
         <section className="sec" id="how">
           <div className="rule">
             <h2 className="big">HOW IT WORKS</h2>
@@ -128,7 +132,10 @@ export default function LandingPage({ onGetStarted }) {
             </div>
           </div>
         </section>
+      </div>
 
+      <div className="band cool">
+        <div className="lp-wrap">
         <section className="sec" id="screens">
           <div className="duo">
             <div>
@@ -155,7 +162,10 @@ export default function LandingPage({ onGetStarted }) {
             </div>
           </div>
         </section>
+        </div>
+      </div>
 
+      <div className="lp-wrap">
         <section className="sec" id="faq">
           <div className="faq">
             <h2>자주 묻는 질문</h2>
@@ -179,7 +189,9 @@ export default function LandingPage({ onGetStarted }) {
             </div>
           </div>
         </section>
+      </div>
 
+      <div className="lp-wrap">
         <section className="sec">
           <div className="closing">
             <div>

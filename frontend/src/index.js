@@ -1168,13 +1168,63 @@ function App() {
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3>
-                {isView
-                  ? `${modalInf.handle} ${modalInf.result === "통과" ? "통과" : "반려"} 사유`
-                  : canEditVerdict
-                    ? `${modalInf.handle} 피드백 작성`
-                    : `${modalInf.handle} 코멘트 확인`}
-              </h3>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: "10px",
+                  marginBottom: "4px",
+                }}
+              >
+                <div>
+                  {isView && (
+                    <span
+                      style={{
+                        display: "inline-block",
+                        fontSize: "10.5px",
+                        fontWeight: 700,
+                        padding: "3px 9px",
+                        borderRadius: "999px",
+                        marginBottom: "8px",
+                        color: modalInf.result === "통과" ? "var(--pass)" : "var(--block)",
+                        background: modalInf.result === "통과" ? "var(--pass-bg)" : "var(--block-bg)",
+                      }}
+                    >
+                      {modalInf.result === "통과" ? "통과" : "반려"}
+                    </span>
+                  )}
+                  <h3 style={{ margin: 0 }}>
+                    {isView
+                      ? `${modalInf.handle} ${modalInf.result === "통과" ? "통과" : "반려"} 사유`
+                      : canEditVerdict
+                        ? `${modalInf.handle} 피드백 작성`
+                        : `${modalInf.handle} 코멘트 확인`}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedInf(null)}
+                  aria-label="닫기"
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--mute)",
+                    width: "28px",
+                    height: "28px",
+                    borderRadius: "999px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    cursor: "pointer",
+                    flex: "none",
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M5 5L19 19M19 5L5 19" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                  </svg>
+                </button>
+              </div>
               {modalInf.status?.includes("(음성)") && (
                 <div className="ocr-pending" style={{ marginBottom: "10px" }}>
                   <span className="dot" />
@@ -1221,110 +1271,128 @@ function App() {
                           ? "화면 자막 검수가 아직 진행 중입니다."
                           : "표시할 결과가 없습니다."}
                     </div>
-                  ) : (
-                    <div
-                      style={{
-                        fontSize: "12px",
-                        background: "#F7F9F5",
-                        border: "1px solid var(--line)",
-                        borderRadius: "4px",
-                        padding: "10px",
-                        marginBottom: "12px",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      <div>
-                        브랜드 언급:{" "}
-                        {activeReview.brandMentioned ? "✅" : "❌"}
-                        {"  "}/ 제품명 언급:{" "}
-                        {activeReview.productMentioned ? "✅" : "❌"}
-                        {activeReview.reviewNeeded && (
-                          <span style={{ color: "var(--block)", marginLeft: "6px" }}>
-                            ⚠️ 표기 확인 필요 (아래 발견 내역 참고)
-                          </span>
+                  ) : (() => {
+                    const occ = activeReview.occurrences || [];
+                    const brandFlag = occ.some((o) => o.type === "brand" && o.needsReview);
+                    const productFlag = occ.some((o) => o.type === "product" && o.needsReview);
+                    const matchedCount = activeReview.matchedUsps?.length || 0;
+                    const missingCount = activeReview.missingUsps?.length || 0;
+                    const uspTotal = matchedCount + missingCount;
+                    const banCount = activeReview.violatedBans?.length || 0;
+                    const cards = [
+                      {
+                        k: "브랜드 언급",
+                        tone: !activeReview.brandMentioned ? "bad" : brandFlag ? "warn" : "neutral",
+                        v: !activeReview.brandMentioned ? "언급되지 않음" : brandFlag ? "표기 확인 필요" : "확인됨",
+                      },
+                      {
+                        k: "제품명 언급",
+                        tone: !activeReview.productMentioned ? "bad" : productFlag ? "warn" : "neutral",
+                        v: !activeReview.productMentioned ? "언급되지 않음" : productFlag ? "표기 확인 필요" : "확인됨",
+                      },
+                      {
+                        k: "필수 포함사항",
+                        tone: uspTotal === 0 ? "neutral" : missingCount > 0 ? "warn" : "neutral",
+                        v: uspTotal === 0 ? "해당 없음" : `${matchedCount} / ${uspTotal} 충족`,
+                      },
+                      {
+                        k: "금지사항 위반",
+                        tone: banCount > 0 ? "bad" : "neutral",
+                        v: banCount > 0 ? `${banCount}건` : "없음",
+                      },
+                    ];
+                    const needsReviewCount = occ.filter((o) => o.needsReview).length;
+                    const summaryParts = [];
+                    if (missingCount > 0) summaryParts.push(`누락 USP ${activeReview.missingUsps.join(", ")}`);
+                    if (banCount > 0) summaryParts.push(`금지사항 위반 ${activeReview.violatedBans.join(", ")}`);
+                    if (needsReviewCount > 0) summaryParts.push(`표기 확인 필요 ${needsReviewCount}건`);
+                    const summaryText =
+                      summaryParts.length > 0
+                        ? summaryParts.join(", ") + "."
+                        : "특이사항이 발견되지 않았습니다.";
+
+                    return (
+                      <div style={{ marginBottom: "12px" }}>
+                        <div className="stat-grid">
+                          {cards.map((c) => (
+                            <div key={c.k} className={`stat-card ${c.tone}`}>
+                              <div className="k">{c.k}</div>
+                              <div className="v">
+                                <span className="dot" />
+                                {c.v}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="summary-line">{summaryText}</div>
+                        {activeReview.feedback && (
+                          <div style={{ fontSize: "12px", lineHeight: 1.6, marginBottom: "12px" }}>
+                            {activeReview.feedback}
+                          </div>
+                        )}
+                        {occ.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>
+                              세부 발견 내역
+                            </div>
+                            <table
+                              style={{
+                                width: "100%",
+                                borderCollapse: "collapse",
+                                fontSize: "11px",
+                              }}
+                            >
+                              <thead>
+                                <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
+                                  <th style={{ padding: "4px 6px" }}>시간</th>
+                                  {reviewTab === "combined" && (
+                                    <th style={{ padding: "4px 6px" }}>출처</th>
+                                  )}
+                                  <th style={{ padding: "4px 6px" }}>내용</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {occ.map((o, idx) => (
+                                  <tr
+                                    key={idx}
+                                    style={{
+                                      borderBottom: "1px solid var(--line)",
+                                      background: o.needsReview ? "var(--warn-bg)" : undefined,
+                                    }}
+                                  >
+                                    <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
+                                      {formatTimestamp(o.timestamp)}
+                                    </td>
+                                    {reviewTab === "combined" && (
+                                      <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
+                                        {o.source === "자막" ? "🖼 자막" : "🎤 음성"}
+                                      </td>
+                                    )}
+                                    <td style={{ padding: "4px 6px" }}>
+                                      "{o.quote}"
+                                      {o.type && (
+                                        <span style={{ color: "var(--mute)" }}>
+                                          {" "}
+                                          ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
+                                          {o.note ? ` · ${o.note}` : ""})
+                                        </span>
+                                      )}
+                                      {o.needsReview && (
+                                        <span style={{ color: "var(--warn)", fontWeight: 600 }}>
+                                          {" "}
+                                          ⚠️ 등록된 표기와 정확히 일치하지 않음 — 원본 확인 필요
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         )}
                       </div>
-                      {activeReview.matchedUsps?.length > 0 && (
-                        <div>
-                          ✅ 충족 USP: {activeReview.matchedUsps.join(", ")}
-                        </div>
-                      )}
-                      {activeReview.missingUsps?.length > 0 && (
-                        <div style={{ color: "var(--block)" }}>
-                          ⚠️ 누락 USP: {activeReview.missingUsps.join(", ")}
-                        </div>
-                      )}
-                      {activeReview.violatedBans?.length > 0 && (
-                        <div style={{ color: "var(--block)" }}>
-                          🚫 위반 금칙어:{" "}
-                          {activeReview.violatedBans.join(", ")}
-                        </div>
-                      )}
-                      {activeReview.feedback && (
-                        <div style={{ marginTop: "6px" }}>{activeReview.feedback}</div>
-                      )}
-                      {activeReview.occurrences?.length > 0 && (
-                        <div style={{ marginTop: "10px" }}>
-                          <div style={{ fontWeight: 600, marginBottom: "4px" }}>
-                            세부 발견 내역
-                          </div>
-                          <table
-                            style={{
-                              width: "100%",
-                              borderCollapse: "collapse",
-                              fontSize: "11px",
-                            }}
-                          >
-                            <thead>
-                              <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
-                                <th style={{ padding: "4px 6px" }}>시간</th>
-                                {reviewTab === "combined" && (
-                                  <th style={{ padding: "4px 6px" }}>출처</th>
-                                )}
-                                <th style={{ padding: "4px 6px" }}>내용</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {activeReview.occurrences.map((o, idx) => (
-                                <tr
-                                  key={idx}
-                                  style={{
-                                    borderBottom: "1px solid var(--line)",
-                                    background: o.needsReview ? "#FFF7E6" : undefined,
-                                  }}
-                                >
-                                  <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
-                                    {formatTimestamp(o.timestamp)}
-                                  </td>
-                                  {reviewTab === "combined" && (
-                                    <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
-                                      {o.source === "자막" ? "🖼 자막" : "🎤 음성"}
-                                    </td>
-                                  )}
-                                  <td style={{ padding: "4px 6px" }}>
-                                    "{o.quote}"
-                                    {o.type && (
-                                      <span style={{ color: "var(--mute)" }}>
-                                        {" "}
-                                        ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
-                                        {o.note ? ` · ${o.note}` : ""})
-                                      </span>
-                                    )}
-                                    {o.needsReview && (
-                                      <span style={{ color: "var(--block)", fontWeight: 600 }}>
-                                        {" "}
-                                        ⚠️ 등록된 표기와 정확히 일치하지 않음 — 원본 확인 필요
-                                      </span>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                    );
+                  })()}
                 </>
               )}
               {/* 탭이 있으면(종합/음성/자막) 각 탭 안에 이미 그 탭 기준 피드백이
