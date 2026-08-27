@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import * as XLSX from "xlsx";
 import CampaignSettings from "./CampaignSettings";
 import CampaignCreate, { formatCampaignPeriod } from "./CampaignCreate";
+import LandingPage from "./LandingPage";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8787";
 const STORAGE_KEY = "reelcheck_campaigns_v1";
@@ -141,9 +142,10 @@ function mapApiCampaign(row, localInfluencers = []) {
 
 function App() {
   const local = loadLocal();
-  // 접속하면 먼저 "제일기획/MCN·에이전시" 중 하나를 고르는 홈 화면을 보여준다.
-  // 로고를 누르면 언제든 이 화면으로 돌아온다.
-  const [screen, setScreen] = useState("home");
+  // 접속하면 먼저 랜딩 페이지(소개 화면)를 보여주고, "Get Started"/"로그인"을
+  // 누르면 "제일기획/MCN·에이전시" 중 하나를 고르는 화면으로 이어진다. 로고를
+  // 누르면 언제든 랜딩 페이지로 돌아온다.
+  const [screen, setScreen] = useState("landing");
   const [role, setRole] = useState("marketer");
   const [tab, setTab] = useState("campaign");
   const [guideOpen, setGuideOpen] = useState(false);
@@ -568,11 +570,15 @@ function App() {
     }
   };
 
+  if (screen === "landing") {
+    return <LandingPage onGetStarted={() => setScreen("home")} />;
+  }
+
   if (screen === "home") {
     return (
       <div className="home">
         <div className="bar">
-          <button className="logo" onClick={() => setScreen("home")}>
+          <button className="logo" onClick={() => setScreen("landing")}>
             <span className="mark" />
             <span className="word">
               In<em>Sense</em>
@@ -617,7 +623,7 @@ function App() {
     <div>
       {/* 상단 바 */}
       <div className="bar">
-        <button className="logo" onClick={() => setScreen("home")}>
+        <button className="logo" onClick={() => setScreen("landing")}>
           <span className="mark" />
           <span className="word">
             In<em>Sense</em>
