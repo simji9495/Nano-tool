@@ -58,7 +58,10 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
                 </div>
             </div>
             <div style={{ marginTop: '20px' }}>
-                <label className="lab">필수 포함 핵심 USP 명단</label>
+                <label className="lab">필수 포함 사항</label>
+                <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '6px' }}>
+                    *오디오 또는 자막에 반드시 포함되어야 하는 제품 USP 등을 기입해주세요.
+                </div>
                 {campaign.usps.map((usp, i) => (
                     <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
                         <input className="in" value={usp} onChange={(e) => {
@@ -76,9 +79,11 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
                 </button>
             </div>
             <div style={{ marginTop: '15px' }}>
-                <label className="lab">금칙 항목</label>
+                <label className="lab">금지 사항</label>
                 <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '6px' }}>
-                    자주 쓰는 금칙은 아래 버튼으로 빠르게 추가하세요. 그 외 개념적인 금지 사항(예: "자극감 언급")은 아래 입력란에 직접 적으면 문맥을 고려해 검수합니다 — "화한 느낌"은 찾아내지만 "화한 느낌 없이"처럼 부정된 표현은 위반으로 보지 않습니다.
+                    *자주 쓰는 금칙은 아래 버튼으로 빠르게 추가하세요.
+                    <br />
+                    *그 외 개념적인 금지 사항(예: "자극감 언급")은 아래 입력란에 직접 적으면 문맥을 고려해 검수합니다 — "화한 느낌"은 찾아서 반려시키지만 "화한 느낌 없어서 좋아요" 같은 표현은 문맥을 고려하여 통과시킵니다.
                 </div>
                 {!showCompetitor && (
                     <div style={{ marginBottom: '10px' }}>

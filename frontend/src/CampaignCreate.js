@@ -80,10 +80,6 @@ export default function CampaignCreate({
         <div className="card-hd">
           <h2>캠페인 생성</h2>
         </div>
-        <p className="lede" style={{ marginTop: 0 }}>
-          캠페인마다 인플루언서 명단이 따로 관리됩니다. A캠페인에 등록된 인원은
-          A캠페인에서만 유효합니다.
-        </p>
         <form onSubmit={handleSubmit}>
           <div className="grid2">
             <div>
@@ -92,7 +88,7 @@ export default function CampaignCreate({
                 className="in"
                 value={form.advertiser}
                 onChange={(e) => setField("advertiser", e.target.value)}
-                placeholder="예: 나노뷰티"
+                placeholder="광고주명(예: 우르오스)"
               />
             </div>
             <div>
@@ -101,7 +97,7 @@ export default function CampaignCreate({
                 className="in"
                 value={form.name}
                 onChange={(e) => setField("name", e.target.value)}
-                placeholder="예: 워터에센스 나노 시딩"
+                placeholder="프로젝트명(예: 스킨 브리지 로션 시딩 캠페인)"
               />
             </div>
           </div>
@@ -162,7 +158,7 @@ export default function CampaignCreate({
               className="in"
               value={form.manager}
               onChange={(e) => setField("manager", e.target.value)}
-              placeholder="예: 홍길동"
+              placeholder="담당자(예: 김제일)"
             />
           </div>
           {error && (
@@ -184,7 +180,7 @@ export default function CampaignCreate({
 
       <div className="card">
         <div className="card-hd">
-          <h2>{canCreate ? "생성된 캠페인" : "캠페인 목록"}</h2>
+          <h2>캠페인 목록</h2>
         </div>
         {campaigns.length === 0 ? (
           <p style={{ fontSize: 13, color: "var(--mute)", margin: 0 }}>
