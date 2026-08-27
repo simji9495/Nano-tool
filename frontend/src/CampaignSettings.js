@@ -83,7 +83,9 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
                 <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '6px' }}>
                     *자주 쓰는 금칙은 아래 버튼으로 빠르게 추가하세요.
                     <br />
-                    *그 외 개념적인 금지 사항(예: "자극감 언급")은 아래 입력란에 직접 적으면 문맥을 고려해 검수합니다 — "화한 느낌"은 찾아서 반려시키지만 "화한 느낌 없어서 좋아요" 같은 표현은 문맥을 고려하여 통과시킵니다.
+                    *그 외 개념적인 금지 사항(예: "자극감 언급")은 아래 입력란에 직접 적으면 문맥을 고려해 검수합니다
+                    <br />
+                    — "화한 느낌"은 찾아서 반려시키지만 "화한 느낌 없어서 좋아요" 같은 표현은 문맥을 고려하여 통과시킵니다.
                 </div>
                 {!showCompetitor && (
                     <div style={{ marginBottom: '10px' }}>

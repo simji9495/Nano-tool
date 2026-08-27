@@ -88,7 +88,7 @@ export default function CampaignCreate({
                 className="in"
                 value={form.advertiser}
                 onChange={(e) => setField("advertiser", e.target.value)}
-                placeholder="광고주명(예: 우르오스)"
+                placeholder="예: 우르오스"
               />
             </div>
             <div>
@@ -97,7 +97,7 @@ export default function CampaignCreate({
                 className="in"
                 value={form.name}
                 onChange={(e) => setField("name", e.target.value)}
-                placeholder="프로젝트명(예: 스킨 브리지 로션 시딩 캠페인)"
+                placeholder="예: 스킨 브리지 로션 시딩 캠페인"
               />
             </div>
           </div>
@@ -158,7 +158,7 @@ export default function CampaignCreate({
               className="in"
               value={form.manager}
               onChange={(e) => setField("manager", e.target.value)}
-              placeholder="담당자(예: 김제일)"
+              placeholder="예: 김제일"
             />
           </div>
           {error && (
