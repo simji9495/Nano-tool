@@ -14,9 +14,6 @@ export default function LandingPage({ onGetStarted }) {
           <a href="#screens">화면</a>
           <a href="#faq">FAQ</a>
         </nav>
-        <button className="btn sm outline" onClick={onGetStarted}>
-          로그인
-        </button>
         <button className="btn sm" onClick={onGetStarted}>
           Get Started
         </button>

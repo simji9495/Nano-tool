@@ -142,9 +142,9 @@ function mapApiCampaign(row, localInfluencers = []) {
 
 function App() {
   const local = loadLocal();
-  // 접속하면 먼저 랜딩 페이지(소개 화면)를 보여주고, "Get Started"/"로그인"을
-  // 누르면 "제일기획/MCN·에이전시" 중 하나를 고르는 화면으로 이어진다. 로고를
-  // 누르면 언제든 랜딩 페이지로 돌아온다.
+  // 접속하면 먼저 랜딩 페이지(소개 화면)를 보여주고, "Get Started"를 누르면
+  // "제일기획/MCN·에이전시" 중 하나를 고르는 화면으로 이어진다. 로그인 기능은
+  // 아직 붙이지 않아 버튼도 없다. 로고를 누르면 언제든 랜딩 페이지로 돌아온다.
   const [screen, setScreen] = useState("landing");
   const [role, setRole] = useState("marketer");
   const [tab, setTab] = useState("campaign");
