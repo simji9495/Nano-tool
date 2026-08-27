@@ -29,8 +29,8 @@ export default function LandingPage({ onGetStarted }) {
               1차는 AI가 끝내둡니다
             </h1>
             <p>
-              브랜드·제품명, 필수 USP, 금칙어를 영상의 발화와 자막에서 함께
-              확인합니다. 담당자는 반려·애매 건만 열어보면 됩니다.
+              브랜드·제품명, 필수 USP, 금칙어를 영상의 오디오와 자막에서
+              스크리닝합니다. 담당자는 반려·애매 건만 열어보면 됩니다.
             </p>
             <div className="cta-row">
               <button className="btn" onClick={onGetStarted}>
@@ -109,23 +109,23 @@ export default function LandingPage({ onGetStarted }) {
             <div className="process">
               <div>
                 <span>STEP 1</span>
-                <h3>업로드</h3>
+                <h3>영상 업로드</h3>
                 <p>MCN/에이전시가 인플루언서 영상 파일을 올립니다.</p>
               </div>
               <div>
                 <span>STEP 2</span>
-                <h3>음성 판정 (10~30초)</h3>
-                <p>발화를 텍스트로 옮겨 가이드라인과 대조하고 즉시 결과를 띄웁니다.</p>
+                <h3>오디오 검수</h3>
+                <p>영상의 오디오를 전사하여 가이드라인과 대조하고 즉시 검수 결과를 띄웁니다.</p>
               </div>
               <div>
                 <span>STEP 3</span>
-                <h3>자막 판정 (백그라운드)</h3>
-                <p>장면 전환 지점을 캡처해 화면 글자를 읽고, 의심 구간만 정밀 확인합니다.</p>
+                <h3>자막 검수</h3>
+                <p>자막이 바뀌는 장면을 캡처해 검수하고, 의심되는 장면은 정밀 확인합니다.</p>
               </div>
               <div>
                 <span>STEP 4</span>
-                <h3>종합 → 사람 확정</h3>
-                <p>둘을 합친 판정과 시간대별 근거를 보고 담당자가 최종 결정합니다.</p>
+                <h3>마케터 최종 컨펌</h3>
+                <p>담당자가 AI 검수 결과를 검토하고, 최종 컨펌합니다.</p>
               </div>
             </div>
           </div>
@@ -167,7 +167,7 @@ export default function LandingPage({ onGetStarted }) {
                 <p>아닙니다. 1차 스크리닝 결과이며, 근거를 확인한 담당자가 최종 확정합니다.</p>
               </div>
               <div className="item">
-                <h3>발화를 잘못 알아듣지는 않나요?</h3>
+                <h3>영상 오디오를 잘못 알아듣지는 않나요?</h3>
                 <p>신조어·특이한 제품명은 다르게 인식될 수 있어, 전사 원문과 시간대별 근거를 함께 제공합니다.</p>
               </div>
               <div className="item">
@@ -185,8 +185,11 @@ export default function LandingPage({ onGetStarted }) {
         <section className="sec">
           <div className="closing">
             <div>
-              <h2>우리 캠페인 기준으로 한 번 돌려볼까요</h2>
-              <p>가이드라인과 영상 몇 개만 있으면 바로 결과를 보여드립니다.</p>
+              <h2>시딩 캠페인을 운영 중이신가요?</h2>
+              <p>
+                수백 개의 영상, 직접 검토하지 마세요. 가이드라인과 영상 몇
+                개만 있으면 AI가 1차 검수를 대신해줍니다.
+              </p>
             </div>
             <button
               className="btn"
