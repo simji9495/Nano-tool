@@ -1290,7 +1290,7 @@ function App() {
                   </div>
                 )}
                 {videoUrl && canEditVerdict && (
-                  <>
+                  <div className="scene-fb-card">
                     <button type="button" className="video-feedback-btn" onClick={handleFeedbackThisScene}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                         <path d="M5 3V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -1299,11 +1299,17 @@ function App() {
                       이 장면 피드백하기
                     </button>
                     <div className="video-feedback-note">
-                      버튼을 누르면 지금 장면이 "수정 필요 사항"에 새 행으로 추가됩니다.
+                      수정이 필요한 장면에서 일시정지 한 후
+                      <br />
+                      버튼을 누르면 "수정 필요 사항"에 행이 추가됩니다.
                     </div>
-                  </>
+                  </div>
                 )}
-                <div className="video-meta">마케터가 통과 판정하면 영상은 시스템에서 자동 삭제됩니다</div>
+                <div className="video-meta">
+                  *미리보기 영상은 저화질로 재생됩니다.
+                  <br />
+                  *마케터가 통과 판정하면 영상은 시스템에서 자동 삭제됩니다.
+                </div>
               </div>
               <div className="content-pane">
               <div
