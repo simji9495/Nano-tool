@@ -1577,8 +1577,7 @@ function App() {
                                           </span>
                                         )}
                                         {o.needsReview && !o.manual && (
-                                          <span style={{ color: "var(--warn)", fontWeight: 600 }}>
-                                            {" "}
+                                          <span style={{ display: "block", marginTop: "4px", color: "var(--warn)", fontWeight: 600 }}>
                                             ⚠️ 등록된 표기와 정확히 일치하지 않음 — 원본 확인 필요
                                           </span>
                                         )}
@@ -1687,16 +1686,18 @@ function App() {
 
                             {canEditVerdict && (
                               <>
-                                <button
-                                  type="button"
-                                  className="row-add-btn"
-                                  onClick={() => setAddRowOpen((v) => !v)}
-                                >
-                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
-                                    <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
-                                  </svg>
-                                  발견 내역 직접 추가
-                                </button>
+                                <div className="action-block">
+                                  <button
+                                    type="button"
+                                    className="icon-action dark sm"
+                                    onClick={() => setAddRowOpen((v) => !v)}
+                                  >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                      <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+                                    </svg>
+                                    발견 내역 직접 추가
+                                  </button>
+                                </div>
                                 {addRowOpen && (
                                   <div className="new-row-form">
                                     <div className="nrf-grid">
