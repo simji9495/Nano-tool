@@ -1316,24 +1316,33 @@ function App() {
                       const base = (occDrafts[key] ?? draftFallback(key) ?? []).map((o) => ({ ...o }));
                       setOccDrafts((prev) => ({ ...prev, [key]: fn(base) }));
                     };
+                    // 같은 시간·같은 문구라도 브랜드용/제품용처럼 type이 다르면 서로 다른
+                    // 항목이다 — type까지 같이 봐야 하고, 그마저 겹치면(이론상) 첫 번째
+                    // 하나만 골라서 그 항목 하나에만 영향을 주게 한다.
+                    const findMatchIndex = (base, target) =>
+                      base.findIndex(
+                        (o) => o.timestamp === target.timestamp && o.quote === target.quote && o.type === target.type,
+                      );
                     const saveEditedRow = (idx, content, fix) => {
                       const target = occ[idx];
                       if (!target) return;
-                      mutateDraft(draftKeyFor(target), (base) =>
-                        base.map((o) =>
-                          o.timestamp === target.timestamp && o.quote === target.quote
-                            ? { ...o, quote: content, fix, type: undefined, note: "", needsReview: false, manual: true }
-                            : o,
-                        ),
-                      );
+                      mutateDraft(draftKeyFor(target), (base) => {
+                        const i = findMatchIndex(base, target);
+                        if (i === -1) return base;
+                        const next = [...base];
+                        next[i] = { ...next[i], quote: content, fix, type: undefined, note: "", needsReview: false, manual: true };
+                        return next;
+                      });
                       setEditingOccIdx(null);
                     };
                     const deleteRow = (idx) => {
                       const target = occ[idx];
                       if (!target) return;
-                      mutateDraft(draftKeyFor(target), (base) =>
-                        base.filter((o) => !(o.timestamp === target.timestamp && o.quote === target.quote)),
-                      );
+                      mutateDraft(draftKeyFor(target), (base) => {
+                        const i = findMatchIndex(base, target);
+                        if (i === -1) return base;
+                        return base.filter((_, j) => j !== i);
+                      });
                     };
                     const addRow = () => {
                       const secs = parseInt(newRow.time, 10) || 0;
@@ -1420,122 +1429,153 @@ function App() {
                             {activeReview.feedback}
                           </div>
                         )}
-                        {(occ.length > 0 || canEditVerdict) && (
-                          <div>
-                            <div className="detail-hd-row">
-                              <div style={{ fontSize: "12px", fontWeight: 700 }}>세부 발견 내역</div>
+                        {(occ.length > 0 || canEditVerdict) && (() => {
+                          // 가이드를 지킨 구간(정확 표기·충족 USP)과 손봐야 할 구간(표기
+                          // 확인 필요·금지 사항 위반·오탈자 의심)을 한 표에 섞어두면
+                          // 뭐가 실제 문제인지 헷갈린다 — 표를 둘로 나누고, 마케터가
+                          // 집중해야 할 "수정 필요 사항"을 위에 둔다.
+                          const isFlagged = (o) => o.needsReview === true || o.type === "ban" || o.type === "typo";
+                          const indexed = occ.map((o, idx) => ({ o, idx }));
+                          const needsAttention = indexed.filter(({ o }) => isFlagged(o));
+                          const compliant = indexed.filter(({ o }) => !isFlagged(o));
+
+                          const renderRows = (rows) =>
+                            rows.map(({ o, idx }) => {
+                              const isEditing = canEditVerdict && editingOccIdx === idx;
+                              return (
+                                <tr key={idx} style={{ background: o.needsReview ? "var(--warn-bg)" : undefined }}>
+                                  <td style={{ whiteSpace: "nowrap" }}>{formatTimestamp(o.timestamp)}</td>
+                                  {reviewTab === "combined" && (
+                                    <td style={{ whiteSpace: "nowrap" }}>
+                                      {o.source === "자막" ? "🖼 자막" : "🎤 음성"}
+                                    </td>
+                                  )}
+                                  {isEditing ? (
+                                    <>
+                                      <td>
+                                        <input className="occ-edit-in" defaultValue={o.quote} id={`occ-content-${idx}`} />
+                                      </td>
+                                      <td>
+                                        <input
+                                          className="occ-edit-in"
+                                          defaultValue={o.fix || ""}
+                                          placeholder="수정방향 입력"
+                                          id={`occ-fix-${idx}`}
+                                        />
+                                      </td>
+                                      <td className="ops-cell">
+                                        <button
+                                          type="button"
+                                          className="occ-icon-btn"
+                                          title="저장"
+                                          onClick={() =>
+                                            saveEditedRow(
+                                              idx,
+                                              document.getElementById(`occ-content-${idx}`).value,
+                                              document.getElementById(`occ-fix-${idx}`).value,
+                                            )
+                                          }
+                                        >
+                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                            <path d="M5 12.5L10 17L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                        </button>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td>
+                                        "{o.quote}"
+                                        {o.type && (
+                                          <span style={{ color: "var(--mute)" }}>
+                                            {" "}
+                                            ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
+                                            {o.note ? ` · ${o.note}` : ""})
+                                          </span>
+                                        )}
+                                        {o.needsReview && !o.manual && (
+                                          <span style={{ color: "var(--warn)", fontWeight: 600 }}>
+                                            {" "}
+                                            ⚠️ 등록된 표기와 정확히 일치하지 않음 — 원본 확인 필요
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className={`fix-cell${o.fix ? "" : " empty"}`}>{o.fix || "—"}</td>
+                                      {canEditVerdict && (
+                                        <td className="ops-cell">
+                                          <button
+                                            type="button"
+                                            className="occ-icon-btn"
+                                            title="수정"
+                                            onClick={() => setEditingOccIdx(idx)}
+                                          >
+                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                              <path d="M4 20L4.6 16.5L15.3 5.8C15.9 5.2 16.9 5.2 17.5 5.8L18.2 6.5C18.8 7.1 18.8 8.1 18.2 8.7L7.5 19.4L4 20Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="occ-icon-btn danger"
+                                            title="삭제"
+                                            onClick={() => deleteRow(idx)}
+                                          >
+                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                              <path d="M5 7H19M9 7V5C9 4.4 9.4 4 10 4H14C14.6 4 15 4.4 15 5V7M7 7L7.6 19C7.7 19.6 8.1 20 8.7 20H15.3C15.9 20 16.3 19.6 16.4 19L17 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                            </svg>
+                                          </button>
+                                        </td>
+                                      )}
+                                    </>
+                                  )}
+                                </tr>
+                              );
+                            });
+
+                          const renderTable = (rows) => (
+                            <div className="detail-wrap">
+                              <table className="detail-tbl">
+                                <thead>
+                                  <tr>
+                                    <th>시간</th>
+                                    {reviewTab === "combined" && <th>출처</th>}
+                                    <th>내용</th>
+                                    <th>수정방향</th>
+                                    {canEditVerdict && <th></th>}
+                                  </tr>
+                                </thead>
+                                <tbody>{renderRows(rows)}</tbody>
+                              </table>
                             </div>
-                            {occ.length > 0 && (
-                              <div className="detail-wrap">
-                                <table className="detail-tbl">
-                                  <thead>
-                                    <tr>
-                                      <th>시간</th>
-                                      {reviewTab === "combined" && <th>출처</th>}
-                                      <th>내용</th>
-                                      <th>수정방향</th>
-                                      {canEditVerdict && <th></th>}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {occ.map((o, idx) => {
-                                      const isEditing = canEditVerdict && editingOccIdx === idx;
-                                      return (
-                                        <tr key={idx} style={{ background: o.needsReview ? "var(--warn-bg)" : undefined }}>
-                                          <td style={{ whiteSpace: "nowrap" }}>{formatTimestamp(o.timestamp)}</td>
-                                          {reviewTab === "combined" && (
-                                            <td style={{ whiteSpace: "nowrap" }}>
-                                              {o.source === "자막" ? "🖼 자막" : "🎤 음성"}
-                                            </td>
-                                          )}
-                                          {isEditing ? (
-                                            <>
-                                              <td>
-                                                <input
-                                                  className="occ-edit-in"
-                                                  defaultValue={o.quote}
-                                                  id={`occ-content-${idx}`}
-                                                />
-                                              </td>
-                                              <td>
-                                                <input
-                                                  className="occ-edit-in"
-                                                  defaultValue={o.fix || ""}
-                                                  placeholder="수정방향 입력"
-                                                  id={`occ-fix-${idx}`}
-                                                />
-                                              </td>
-                                              <td className="ops-cell">
-                                                <button
-                                                  type="button"
-                                                  className="occ-icon-btn"
-                                                  title="저장"
-                                                  onClick={() =>
-                                                    saveEditedRow(
-                                                      idx,
-                                                      document.getElementById(`occ-content-${idx}`).value,
-                                                      document.getElementById(`occ-fix-${idx}`).value,
-                                                    )
-                                                  }
-                                                >
-                                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                                                    <path d="M5 12.5L10 17L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-                                                  </svg>
-                                                </button>
-                                              </td>
-                                            </>
-                                          ) : (
-                                            <>
-                                              <td>
-                                                "{o.quote}"
-                                                {o.type && (
-                                                  <span style={{ color: "var(--mute)" }}>
-                                                    {" "}
-                                                    ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
-                                                    {o.note ? ` · ${o.note}` : ""})
-                                                  </span>
-                                                )}
-                                                {o.needsReview && !o.manual && (
-                                                  <span style={{ color: "var(--warn)", fontWeight: 600 }}>
-                                                    {" "}
-                                                    ⚠️ 등록된 표기와 정확히 일치하지 않음 — 원본 확인 필요
-                                                  </span>
-                                                )}
-                                              </td>
-                                              <td className={`fix-cell${o.fix ? "" : " empty"}`}>{o.fix || "—"}</td>
-                                              {canEditVerdict && (
-                                                <td className="ops-cell">
-                                                  <button
-                                                    type="button"
-                                                    className="occ-icon-btn"
-                                                    title="수정"
-                                                    onClick={() => setEditingOccIdx(idx)}
-                                                  >
-                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                                                      <path d="M4 20L4.6 16.5L15.3 5.8C15.9 5.2 16.9 5.2 17.5 5.8L18.2 6.5C18.8 7.1 18.8 8.1 18.2 8.7L7.5 19.4L4 20Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-                                                    </svg>
-                                                  </button>
-                                                  <button
-                                                    type="button"
-                                                    className="occ-icon-btn danger"
-                                                    title="삭제"
-                                                    onClick={() => deleteRow(idx)}
-                                                  >
-                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                                                      <path d="M5 7H19M9 7V5C9 4.4 9.4 4 10 4H14C14.6 4 15 4.4 15 5V7M7 7L7.6 19C7.7 19.6 8.1 20 8.7 20H15.3C15.9 20 16.3 19.6 16.4 19L17 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                                                    </svg>
-                                                  </button>
-                                                </td>
-                                              )}
-                                            </>
-                                          )}
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
+                          );
+
+                          return (
+                            <>
+                              <div className="detail-hd-row">
+                                <div style={{ fontSize: "12px", fontWeight: 700 }}>
+                                  수정 필요 사항{" "}
+                                  <span style={{ fontWeight: 400, color: "var(--mute)", fontSize: "11px" }}>
+                                    — 이 표를 중심으로 검토해주세요
+                                  </span>
+                                </div>
                               </div>
-                            )}
+                              {needsAttention.length > 0 ? (
+                                renderTable(needsAttention)
+                              ) : (
+                                <div style={{ fontSize: "12px", color: "var(--mute)", marginBottom: "14px" }}>
+                                  수정이 필요한 항목이 없습니다.
+                                </div>
+                              )}
+                              {compliant.length > 0 && (
+                                <>
+                                  <div className="detail-hd-row" style={{ marginTop: "14px" }}>
+                                    <div style={{ fontSize: "12px", fontWeight: 700 }}>가이드 준수 내역</div>
+                                  </div>
+                                  {renderTable(compliant)}
+                                </>
+                              )}
+                            </>
+                          );
+                        })()}
 
                             {canEditVerdict && (
                               <>
@@ -1636,8 +1676,6 @@ function App() {
                                 )}
                               </>
                             )}
-                          </div>
-                        )}
                       </div>
                     );
                   })()}
