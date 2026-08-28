@@ -1663,7 +1663,7 @@ function App() {
                                     수정이 필요한 항목이 없습니다.
                                   </div>
                                 )}
-                                {modalInf.marketerResult === "반려" && (
+                                {modalInf.marketerResult === "반려" && role !== "marketer" && (
                                   <div className="action-block">
                                     <button type="button" className="icon-action dark sm" onClick={copyRejectionText}>
                                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
