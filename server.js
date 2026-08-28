@@ -443,7 +443,10 @@ function scanExactOccurrences(taggedText, target, source, type) {
     if (normQuote.includes(normTarget)) {
       exact.push({ timestamp, source, quote, type });
     } else if (fuzzyContains(normQuote, normTarget)) {
-      near.push({ timestamp, source, quote, type, needsReview: true });
+      // 근접 매치는 등록된 표기를 그대로 "수정방향"으로 제안한다 — 이미 정답을
+      // 알고 있는 항목(마케터가 직접 등록한 브랜드/제품 표기)이라 AI 호출 없이도
+      // 바로 만들 수 있다.
+      near.push({ timestamp, source, quote, type, needsReview: true, fix: `등록된 표기 "${target}"로 수정` });
     }
   }
   return { exact, near };
@@ -490,7 +493,13 @@ async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
     const a = scanExactOccurrences(audioTagged, name, "음성", "ban");
     const c = scanExactOccurrences(captionTagged, name, "자막", "ban");
     competitorExact.push(...a.exact.map((o) => ({ ...o, note: name })), ...c.exact.map((o) => ({ ...o, note: name })));
-    competitorNear.push(...a.near.map((o) => ({ ...o, note: name })), ...c.near.map((o) => ({ ...o, note: name })));
+    // 경쟁 브랜드 근접 매치는 "오타를 고치라"는 게 아니라 "정말 경쟁 브랜드를
+    // 언급한 게 맞는지 확인이 필요하다"는 뜻이라, 등록 표기로의 치환 제안은
+    // 맞지 않는다 — fix를 비운다.
+    competitorNear.push(
+      ...a.near.map((o) => ({ ...o, note: name, fix: "" })),
+      ...c.near.map((o) => ({ ...o, note: name, fix: "" })),
+    );
   }
 
   const prompt = `다음은 인플루언서 광고 영상에서 추출한 텍스트다. 대괄호 [숫자s]는 영상 내 등장 시각(초)이다.
@@ -513,8 +522,11 @@ USP는 문맥을 고려해 판단하라 — 표현이 달라도 같은 의미면
 """${combinedForPrompt}"""
 
 아래 JSON 형식으로만 답하라:
-{"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장","occurrences":[{"timestamp":숫자(초),"source":"음성"|"자막","quote":"실제 언급되거나 문제된 문구","type":"usp"|"ban"|"typo","note":"간단 설명(선택, 없으면 빈 문자열)"}]}
-occurrences는 USP 충족, 그 외 금칙 위반, 오탈자로 의심되는 부분마다 하나씩 만들어라. 해당 없으면 빈 배열로 답하라.`;
+{"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장","occurrences":[{"timestamp":숫자(초),"source":"음성"|"자막","quote":"실제 언급되거나 문제된 문구","type":"usp"|"ban"|"typo","note":"간단 설명(선택, 없으면 빈 문자열)","suggestion":"수정방향(선택, 없으면 빈 문자열)"}]}
+occurrences는 USP 충족, 그 외 금칙 위반, 오탈자로 의심되는 부분마다 하나씩 만들어라. 해당 없으면 빈 배열로 답하라.
+suggestion은 type이 "ban"(금지 사항 위반) 또는 "typo"(오탈자 의심)일 때만 채운다 — 마케터가 바로 반영할 수 있게
+"이 문구를 어떻게 고치면 문제가 없어지는지" 한국어로 짧게 제안하라(예: 표현을 빼거나 다른 말로 바꾸는 구체적인 문장).
+type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을 빈 문자열로 둔다.`;
 
   const r = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -549,6 +561,7 @@ occurrences는 USP 충족, 그 외 금칙 위반, 오탈자로 의심되는 부�
           quote: String(o?.quote || ""),
           type: String(o?.type || ""),
           note: String(o?.note || ""),
+          fix: String(o?.suggestion || ""),
         }))
     : [];
 
