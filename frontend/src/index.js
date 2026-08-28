@@ -1168,7 +1168,7 @@ function App() {
             <div
               className="card"
               style={{
-                width: "480px",
+                width: "min(720px, 94vw)",
                 maxHeight: "85vh",
                 overflowY: "auto",
                 padding: "20px",
