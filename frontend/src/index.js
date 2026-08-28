@@ -1287,7 +1287,24 @@ function App() {
                       const base = (occDraft ?? (activeReview.occurrences || [])).map((o) => ({ ...o }));
                       setOccDrafts((prev) => ({ ...prev, [reviewTab]: fn(base) }));
                     };
+                    // 종합 탭에서 지우거나 고친 항목은, 같은 항목이 원래 나온 출처
+                    // 탭(음성/자막)에도 그대로 반영한다 — timestamp+quote로 같은
+                    // 항목을 찾는다(음성/자막 판정은 별도 AI 호출 결과라 완전히
+                    // 새로 만든 항목이나 LLM이 표현을 살짝 다르게 쓴 항목은 못
+                    // 찾을 수 있다 — 그 경우 해당 탭은 그대로 둔다).
+                    const propagateToSubTab = (source, timestamp, quote, updater) => {
+                      const subKey = source === "자막" ? "caption" : "audio";
+                      const subReview = rootReview?.[subKey];
+                      if (!subReview) return;
+                      setOccDrafts((prev) => {
+                        const subBase = (prev[subKey] ?? (subReview.occurrences || [])).map((o) => ({ ...o }));
+                        const idx = subBase.findIndex((o) => o.timestamp === timestamp && o.quote === quote);
+                        if (idx === -1) return prev;
+                        return { ...prev, [subKey]: updater(subBase, idx) };
+                      });
+                    };
                     const saveEditedRow = (idx, content, fix) => {
+                      const target = occ[idx];
                       mutateOcc((base) =>
                         base.map((o, i) =>
                           i === idx
@@ -1295,28 +1312,53 @@ function App() {
                             : o,
                         ),
                       );
+                      if (reviewTab === "combined" && target) {
+                        propagateToSubTab(target.source, target.timestamp, target.quote, (subBase, subIdx) =>
+                          subBase.map((o, i) =>
+                            i === subIdx
+                              ? { ...o, quote: content, fix, type: undefined, note: "", needsReview: false, manual: true }
+                              : o,
+                          ),
+                        );
+                      }
                       setEditingOccIdx(null);
                     };
-                    const deleteRow = (idx) => mutateOcc((base) => base.filter((_, i) => i !== idx));
+                    const deleteRow = (idx) => {
+                      const target = occ[idx];
+                      mutateOcc((base) => base.filter((_, i) => i !== idx));
+                      if (reviewTab === "combined" && target) {
+                        propagateToSubTab(target.source, target.timestamp, target.quote, (subBase, subIdx) =>
+                          subBase.filter((_, i) => i !== subIdx),
+                        );
+                      }
+                    };
                     const addRow = () => {
                       const secs = parseInt(newRow.time, 10) || 0;
                       const parts = [];
                       if (newRow.checks.length) parts.push(newRow.checks.join(", "));
                       if (newRow.quote.trim()) parts.push(`"${newRow.quote.trim()}"`);
-                      mutateOcc((base) =>
-                        [
-                          ...base,
-                          {
-                            timestamp: secs,
-                            source: newRow.source,
-                            quote: parts.join(" — ") || "(내용 미입력)",
-                            type: undefined,
-                            note: "",
-                            needsReview: Boolean(newRow.fix.trim()) || newRow.checks.length > 0,
-                            fix: newRow.fix.trim(),
-                          },
-                        ].sort((a, b) => a.timestamp - b.timestamp),
-                      );
+                      const newItem = {
+                        timestamp: secs,
+                        source: newRow.source,
+                        quote: parts.join(" — ") || "(내용 미입력)",
+                        type: undefined,
+                        note: "",
+                        needsReview: Boolean(newRow.fix.trim()) || newRow.checks.length > 0,
+                        fix: newRow.fix.trim(),
+                      };
+                      mutateOcc((base) => [...base, newItem].sort((a, b) => a.timestamp - b.timestamp));
+                      if (reviewTab === "combined") {
+                        const subKey = newRow.source === "자막" ? "caption" : "audio";
+                        if (rootReview?.[subKey]) {
+                          setOccDrafts((prev) => {
+                            const subBase = (prev[subKey] ?? (rootReview[subKey].occurrences || [])).map((o) => ({ ...o }));
+                            return {
+                              ...prev,
+                              [subKey]: [...subBase, { ...newItem }].sort((a, b) => a.timestamp - b.timestamp),
+                            };
+                          });
+                        }
+                      }
                       setAddRowOpen(false);
                       setNewRow({ time: "", source: "자막", checks: [], quote: "", fix: "" });
                     };
