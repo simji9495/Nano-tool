@@ -133,6 +133,16 @@
         .nrf-actions .cancel { background:transparent; color:var(--graphite); }
         .nrf-actions .confirm { background:var(--ink); color:#fff; }
 
+        /* ── 반려 사유 복사 / 엑셀 다운로드 버튼 ─────────────────── */
+        .icon-action { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line); background:#fff; color:var(--graphite); border-radius:999px; padding:8px 14px; font-size:12px; font-weight:700; font-family:inherit; cursor:pointer; white-space:nowrap; }
+        .icon-action:hover { border-color:var(--ink); color:var(--ink); }
+        .icon-action:focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
+        .icon-action svg { flex:none; }
+        .foot-note { font-size:11px; color:var(--mute); line-height:1.6; margin-top:8px; }
+        .card-hd-action { display:flex; align-items:flex-start; justify-content:flex-end; gap:16px; margin-bottom:16px; }
+        .card-hd-action .hd-action { display:flex; flex-direction:column; align-items:flex-end; gap:6px; flex:none; }
+        .card-hd-action .hd-action .foot-note { margin-top:0; text-align:right; white-space:nowrap; }
+
         /* ── 업로드 진행률 ───────────────────────────────────── */
         .upload-row { display:flex; justify-content:space-between; font-size:11px; margin-bottom:5px; }
         .upload-row .pct { font-weight:700; font-variant-numeric:tabular-nums; }

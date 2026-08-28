@@ -359,6 +359,46 @@ function App() {
     XLSX.writeFile(wb, "reelcheck_sample.xlsx");
   };
 
+  // 📊 콘텐츠 검수 현황 엑셀 다운로드 — 요약(전체 인플루언서) + 수정 필요 사항(핸들별 세부 발견 내역) 두 시트
+  const handleExportReviewExcel = () => {
+    const summaryRows = influencers.map((inf, idx) => ({
+      "No.": idx + 1,
+      "핸들": inf.handle,
+      "제출 상태": inf.status,
+      "AI 판정": inf.result || "-",
+      "마케터 판정": inf.marketerResult || "-",
+      "업로드 가능여부": isUploadEligible(inf) ? "O" : "X",
+      "마케터 코멘트": inf.feedback || "",
+    }));
+
+    const detailRows = [];
+    influencers.forEach((inf) => {
+      const rootReview = inf.review && !inf.review.error ? inf.review : null;
+      const occ = rootReview?.occurrences || [];
+      occ
+        .filter((o) => o.needsReview === true || o.type === "ban" || o.type === "typo")
+        .forEach((o) => {
+          detailRows.push({
+            "핸들": inf.handle,
+            "시간": formatTimestamp(o.timestamp),
+            "출처": o.source,
+            "내용": o.quote,
+            "수정방향": o.fix || "",
+          });
+        });
+    });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), "검수 현황");
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(detailRows.length ? detailRows : [{ "안내": "수정이 필요한 항목이 없습니다." }]),
+      "수정 필요 사항",
+    );
+    const safeName = (selectedCampaign?.name || "캠페인").replace(/[\\/:*?"<>|]/g, "_");
+    XLSX.writeFile(wb, `검수현황_${safeName}.xlsx`);
+  };
+
   // 📂 파일 업로드 및 데이터 변환 처리 (선택 중인 캠페인 명단만 갱신)
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -1024,6 +1064,19 @@ function App() {
           </div>
         ) : (
           <div className="card">
+            <div className="card-hd-action">
+              <div className="hd-action">
+                <button type="button" className="icon-action" onClick={handleExportReviewExcel}>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 4V15" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    <path d="M7 11L12 16L17 11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M5 19H19" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                  엑셀 다운로드
+                </button>
+                <div className="foot-note">전체 검수현황과 수정이 필요한 내용을 엑셀로 다운로드합니다.</div>
+              </div>
+            </div>
             <table className="tbl">
               <thead>
                 <tr>
@@ -1434,6 +1487,31 @@ function App() {
                           const needsAttention = indexed.filter(({ o }) => isFlagged(o));
                           const compliant = indexed.filter(({ o }) => !isFlagged(o));
 
+                          // 인플루언서에게 그대로 전달할 수 있는 형태로 반려 사유를 정리한다 —
+                          // 항목이 여러 개면 번호를 매겨 한 줄글로 이어붙이지 않는다(가독성).
+                          const copyRejectionText = async () => {
+                            const lines = [`[영상 검수 결과] ${modalInf.handle} — 반려`, ""];
+                            if (modalInf.feedback) {
+                              lines.push(`반려 사유: ${modalInf.feedback}`, "");
+                            }
+                            if (needsAttention.length > 0) {
+                              lines.push(`확인이 필요한 부분 (${needsAttention.length}건)`);
+                              needsAttention.forEach(({ o }, i) => {
+                                lines.push(`${i + 1}. [${formatTimestamp(o.timestamp)}] ${o.source}`);
+                                lines.push(`   "${o.quote}"`);
+                                if (o.fix) lines.push(`   → ${o.fix}`);
+                                lines.push("");
+                              });
+                            }
+                            const text = lines.join("\n").trim();
+                            try {
+                              await navigator.clipboard.writeText(text);
+                              showToast("success", "복사 완료", "클립보드에 복사했습니다.");
+                            } catch {
+                              showToast("error", "복사 실패", "클립보드 접근 권한을 확인해주세요.");
+                            }
+                          };
+
                           // 가이드 준수 내역은 "왜 준수로 판단했는지"를 보여주는 표라
                           // 수정방향이 아니라 그 근거(예: "USP · 워터타입으로 산뜻한
                           // 사용감이 언급됨")를 보여준다.
@@ -1572,6 +1650,20 @@ function App() {
                               ) : (
                                 <div style={{ fontSize: "12px", color: "var(--mute)", marginBottom: "14px" }}>
                                   수정이 필요한 항목이 없습니다.
+                                </div>
+                              )}
+                              {modalInf.marketerResult === "반려" && (
+                                <div style={{ marginBottom: "14px" }}>
+                                  <button type="button" className="icon-action" onClick={copyRejectionText}>
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                                      <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.8" />
+                                      <path d="M16 8V6C16 4.9 15.1 4 14 4H6C4.9 4 4 4.9 4 6V14C4 15.1 4.9 16 6 16H8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                    </svg>
+                                    반려 사유 복사
+                                  </button>
+                                  <div className="foot-note">
+                                    수정이 필요한 사항을 복사해 인플루언서에게 바로 공유하세요.
+                                  </div>
                                 </div>
                               )}
                               {compliant.length > 0 && (
