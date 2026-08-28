@@ -1465,18 +1465,24 @@ function App() {
 
                     return (
                       <div style={{ marginBottom: "12px" }}>
-                        <div className="stat-grid">
-                          {cards.map((c) => (
-                            <div key={c.k} className={`stat-card ${c.tone}`}>
-                              <div className="k">{c.k}</div>
-                              <div className="v">
-                                <span className="dot" />
-                                {c.v}
+                        <div className="sect summary">
+                          <div className="sect-hd">
+                            <span className="dot" />
+                            <span className="label">요약</span>
+                          </div>
+                          <div className="stat-grid">
+                            {cards.map((c) => (
+                              <div key={c.k} className={`stat-card ${c.tone}`}>
+                                <div className="k">{c.k}</div>
+                                <div className="v">
+                                  <span className="dot" />
+                                  {c.v}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
+                          <div className="summary-line" style={{ marginBottom: 0 }}>{summaryText}</div>
                         </div>
-                        <div className="summary-line">{summaryText}</div>
                         {(occ.length > 0 || canEditVerdict) && (() => {
                           // 가이드를 지킨 구간(정확 표기·충족 USP)과 손봐야 할 구간(표기
                           // 확인 필요·금지 사항 위반·오탈자 의심)을 한 표에 섞어두면
@@ -1643,62 +1649,49 @@ function App() {
 
                           return (
                             <>
-                              <div className="detail-hd-row">
-                                <div style={{ fontSize: "12px", fontWeight: 700 }}>
-                                  수정 필요 사항{" "}
-                                  <span style={{ fontWeight: 400, color: "var(--mute)", fontSize: "11px" }}>
-                                    — 이 표를 중심으로 검토해주세요
-                                  </span>
+                              <div className="sect attention">
+                                <div className="sect-hd">
+                                  <span className="dot" />
+                                  <span className="label">수정 필요 사항</span>
+                                  {needsAttention.length > 0 && <span className="count">{needsAttention.length}건</span>}
                                 </div>
-                              </div>
-                              {needsAttention.length > 0 ? (
-                                renderTable(needsAttention, "attention")
-                              ) : (
-                                <div style={{ fontSize: "12px", color: "var(--mute)", marginBottom: "14px" }}>
-                                  수정이 필요한 항목이 없습니다.
-                                </div>
-                              )}
-                              {modalInf.marketerResult === "반려" && (
-                                <div className="action-block">
-                                  <button type="button" className="icon-action dark sm" onClick={copyRejectionText}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                                      <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.8" />
-                                      <path d="M16 8V6C16 4.9 15.1 4 14 4H6C4.9 4 4 4.9 4 6V14C4 15.1 4.9 16 6 16H8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                                    </svg>
-                                    반려 사유 복사
-                                  </button>
-                                  <div className="foot-note">
-                                    수정이 필요한 사항을 복사해 인플루언서에게 바로 공유하세요.
+                                <div className="sub-note">이 표를 중심으로 검토해주세요</div>
+                                {needsAttention.length > 0 ? (
+                                  renderTable(needsAttention, "attention")
+                                ) : (
+                                  <div style={{ fontSize: "12px", color: "var(--mute)" }}>
+                                    수정이 필요한 항목이 없습니다.
                                   </div>
-                                </div>
-                              )}
-                              {compliant.length > 0 && (
-                                <>
-                                  <div className="detail-hd-row" style={{ marginTop: "14px" }}>
-                                    <div style={{ fontSize: "12px", fontWeight: 700 }}>가이드 준수 내역</div>
+                                )}
+                                {modalInf.marketerResult === "반려" && (
+                                  <div className="action-block">
+                                    <button type="button" className="icon-action dark sm" onClick={copyRejectionText}>
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                        <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.8" />
+                                        <path d="M16 8V6C16 4.9 15.1 4 14 4H6C4.9 4 4 4.9 4 6V14C4 15.1 4.9 16 6 16H8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                      </svg>
+                                      반려 사유 복사
+                                    </button>
+                                    <div className="foot-note">
+                                      수정이 필요한 사항을 복사해 인플루언서에게 바로 공유하세요.
+                                    </div>
                                   </div>
-                                  {renderTable(compliant, "compliant")}
-                                </>
-                              )}
-                            </>
-                          );
-                        })()}
-
-                            {canEditVerdict && (
-                              <>
-                                <div className="action-block">
-                                  <button
-                                    type="button"
-                                    className="icon-action dark sm"
-                                    onClick={() => setAddRowOpen((v) => !v)}
-                                  >
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-                                      <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
-                                    </svg>
-                                    발견 내역 직접 추가
-                                  </button>
-                                </div>
-                                {addRowOpen && (
+                                )}
+                                {canEditVerdict && (
+                                  <div className="action-block">
+                                    <button
+                                      type="button"
+                                      className="icon-action dark sm"
+                                      onClick={() => setAddRowOpen((v) => !v)}
+                                    >
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                        <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+                                      </svg>
+                                      발견 내역 직접 추가
+                                    </button>
+                                  </div>
+                                )}
+                                {canEditVerdict && addRowOpen && (
                                   <div className="new-row-form">
                                     <div className="nrf-grid">
                                       <div className="k">시간</div>
@@ -1783,8 +1776,20 @@ function App() {
                                     </div>
                                   </div>
                                 )}
-                              </>
-                            )}
+                              </div>
+                              {compliant.length > 0 && (
+                                <div className="sect compliant">
+                                  <div className="sect-hd">
+                                    <span className="dot" />
+                                    <span className="label">가이드 준수 내역</span>
+                                    <span className="count">{compliant.length}건</span>
+                                  </div>
+                                  {renderTable(compliant, "compliant")}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     );
                   })()}
