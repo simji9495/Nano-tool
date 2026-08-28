@@ -245,7 +245,12 @@ const withCompressionSlot = createSemaphore(Number(process.env.MAX_CONCURRENT_CO
  * 오디오는 화질과 무관하니 그대로 복사해서 STT 품질에 영향이 없게 한다.
  * 자막은 화면 폭 방향으로 놓이므로, 세로 영상(릴스/쇼츠)에서 높이만 고정해버리면
  * 폭이 과도하게 줄어 자막을 못 읽는다 — 가로/세로 중 "짧은 변"을 기준으로 고정해
- * 어느 방향이든 자막이 놓인 폭 방향 해상도가 보존되게 한다. */
+ * 어느 방향이든 자막이 놓인 폭 방향 해상도가 보존되게 한다.
+ * 이 프록시는 판정 상세 팝업의 재생용 영상으로도 그대로 재사용된다(아래
+ * processUploadedVideo 참고) — 원본을 그대로 올리면 휴대폰 촬영 포맷(.mov 등)을
+ * 브라우저가 재생 못 할 수 있고 용량도 커서 로딩이 느린데, mp4/H.264로 다시
+ * 인코딩된 이 프록시는 항상 재생 가능하고 훨씬 가볍다. 그래서 OCR에 필요한
+ * 수준보다 비트레이트를 살짝 높여(600k→900k) 사람이 보기에도 무난하게 맞췄다. */
 async function compressForOcr(videoPath) {
   const dir = await workdir();
   const out = path.join(dir, "proxy.mp4");
@@ -253,7 +258,7 @@ async function compressForOcr(videoPath) {
     "-y", "-i", videoPath,
     "-vf", "scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)'",
     "-preset", "ultrafast",
-    "-b:v", "600k",
+    "-b:v", "900k",
     "-c:a", "copy",
     out,
   ]);
@@ -1161,6 +1166,22 @@ async function processUploadedVideo({ videoPath, influencerId, campaign }) {
   const ocrVideoPath = proxy?.path || videoPath;
   if (proxy) fs.rm(videoPath, { force: true }).catch(() => {}); // 압축 성공했으면 원본은 더 필요 없음
 
+  // 마케터가 최종 판정 전까지 원본과 대조해볼 수 있도록, 위에서 만든 프록시를
+  // 재생용으로 R2에 올려둔다(추가 인코딩 없음). 압축이 실패해 프록시가 없으면
+  // (원본 그대로 OCR을 진행하는 드문 경우) 재생용 업로드는 건너뛴다 — 원본은
+  // 용량·포맷 문제가 재발할 수 있어서 그대로 올리지 않는다.
+  let videoPathForPlayback = null;
+  if (r2 && influencerId && proxy) {
+    try {
+      const buf = await fs.readFile(ocrVideoPath);
+      const reviewKey = `${UPLOADS_PREFIX}review-${influencerId}-${Date.now()}.mp4`;
+      await r2.send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: reviewKey, Body: buf, ContentType: "video/mp4" }));
+      videoPathForPlayback = reviewKey;
+    } catch (e) {
+      console.warn(`[R2] 재생용 영상 업로드 실패: ${e.message}`);
+    }
+  }
+
   const audioTimestamped = formatTimestampedSegments(result.segments) || result.text;
 
   let audioReview = null;
@@ -1191,6 +1212,7 @@ async function processUploadedVideo({ videoPath, influencerId, campaign }) {
         feedback: review?.feedback || "",
         transcript: result.text,
         review,
+        ...(videoPathForPlayback ? { video_path: videoPathForPlayback } : {}),
       })
       .eq("id", influencerId)
       .then(() => {}, () => {});
@@ -1269,17 +1291,11 @@ app.post("/api/transcribe/from-storage", requireR2, async (req, res) => {
     try {
       const { Body } = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: storagePath }));
       await pipeline(Body, createWriteStream(videoPath));
-      // 마케터가 원본 영상과 대조해볼 수 있도록 R2에는 그대로 남겨두고, 어떤
-      // 파일인지 나중에 찾을 수 있게 인플루언서 행에 경로만 기록해둔다. 실제
-      // 삭제는 마케터가 최종 "통과" 판정을 내릴 때(PATCH /api/influencers/:id)
-      // 이뤄진다.
-      if (supabase && influencerId) {
-        await supabase
-          .from("reelcheck_influencers")
-          .update({ video_path: storagePath })
-          .eq("id", influencerId)
-          .then(() => {}, () => {});
-      }
+      // 원본 그대로는 용량이 크고(전송 느림) 휴대폰 촬영본 특유의 포맷(.mov 등)을
+      // 브라우저가 재생 못 할 수도 있다 — processUploadedVideo가 OCR용으로 만드는
+      // 저해상도 프록시를 마케터 재생용으로도 그대로 재사용해서 올리고, 원본은
+      // 로컬로 잘 받았으니 R2에서 바로 지운다.
+      r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: storagePath })).catch(() => {});
     } catch (e) {
       throw new Error(`스토리지에서 파일을 받지 못했습니다: ${e.message}`);
     }

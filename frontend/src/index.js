@@ -197,6 +197,20 @@ function App() {
     videoRef.current.play().catch(() => {});
   };
 
+  const addRowFormRef = useRef(null);
+  // 영상 보다가 바로 그 장면을 "수정 필요 사항"에 추가한다 — 재생을 멈추고
+  // 지금 재생 위치를 발견 내역 추가 폼의 시간 칸에 채운 뒤 폼을 열어준다.
+  const handleFeedbackThisScene = () => {
+    if (!videoRef.current) return;
+    videoRef.current.pause();
+    const t = Math.round(videoRef.current.currentTime);
+    setNewRow((p) => ({ ...p, time: String(t) }));
+    setAddRowOpen(true);
+    requestAnimationFrame(() => {
+      addRowFormRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  };
+
   // 브라우저 기본 alert() 대신 쓰는 커스텀 알림. 4초 후 자동으로 사라지고,
   // 연달아 호출되면 이전 타이머를 취소하고 새로 띄운다.
   const showToast = (type, title, desc = "") => {
@@ -1263,7 +1277,6 @@ function App() {
               className="card verdict-modal"
               style={{
                 width: "min(980px, 96vw)",
-                maxHeight: "85vh",
                 padding: 0,
               }}
               onClick={(e) => e.stopPropagation()}
@@ -1275,6 +1288,20 @@ function App() {
                   <div className="video-placeholder">
                     {videoUnavailable ? "보관된 영상이 없습니다" : "영상 불러오는 중..."}
                   </div>
+                )}
+                {videoUrl && canEditVerdict && (
+                  <>
+                    <button type="button" className="video-feedback-btn" onClick={handleFeedbackThisScene}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                        <path d="M5 3V21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        <path d="M5 4H17L14 8L17 12H5" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                      </svg>
+                      이 장면 피드백하기
+                    </button>
+                    <div className="video-feedback-note">
+                      버튼을 누르면 지금 장면이 "수정 필요 사항"에 새 행으로 추가됩니다.
+                    </div>
+                  </>
                 )}
                 <div className="video-meta">마케터가 통과 판정하면 영상은 시스템에서 자동 삭제됩니다</div>
               </div>
@@ -1749,7 +1776,7 @@ function App() {
                                   </div>
                                 )}
                                 {canEditVerdict && addRowOpen && (
-                                  <div className="new-row-form">
+                                  <div className="new-row-form" ref={addRowFormRef}>
                                     <div className="nrf-grid">
                                       <div className="k">시간</div>
                                       <div className="time-in-wrap">
