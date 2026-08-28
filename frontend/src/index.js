@@ -158,6 +158,12 @@ function App() {
   const [feedbackMode, setFeedbackMode] = useState("edit");
   const [feedbackText, setFeedbackText] = useState("");
   const [reviewTab, setReviewTab] = useState("combined");
+  // 마케터가 세부 발견 내역을 직접 고친 초안 — 탭(종합/음성/자막)별로 따로 보관하고,
+  // 실제로 손댄 탭만 저장 시 review에 반영한다(안 건드린 탭은 서버 원본 그대로 유지).
+  const [occDrafts, setOccDrafts] = useState({});
+  const [editingOccIdx, setEditingOccIdx] = useState(null);
+  const [addRowOpen, setAddRowOpen] = useState(false);
+  const [newRow, setNewRow] = useState({ time: "", source: "자막", checks: [], quote: "", fix: "" });
   const [toast, setToast] = useState(null); // { type: "success"|"error"|"info", title, desc }
   const toastTimerRef = useRef(null);
 
@@ -245,7 +251,22 @@ function App() {
   // 검수 결과 팝업을 새로 열 때마다 "종합" 탭으로 되돌린다.
   useEffect(() => {
     setReviewTab("combined");
+    setOccDrafts({});
+    setEditingOccIdx(null);
+    setAddRowOpen(false);
+    setNewRow({ time: "", source: "자막", checks: [], quote: "", fix: "" });
   }, [selectedInf?.id]);
+
+  // 세부 발견 내역 표를 마케터가 수정/삭제/추가한 탭별 초안을 실제 review 구조에
+  // 합친다 — 손대지 않은 탭은 서버가 준 원본 그대로 둔다.
+  const applyOccurrenceEdits = (rootReview, drafts) => {
+    if (!rootReview || !drafts || !Object.keys(drafts).length) return rootReview;
+    const updated = { ...rootReview };
+    if (drafts.combined) updated.occurrences = drafts.combined;
+    if (drafts.audio && updated.audio) updated.audio = { ...updated.audio, occurrences: drafts.audio };
+    if (drafts.caption && updated.caption) updated.caption = { ...updated.caption, occurrences: drafts.caption };
+    return updated;
+  };
 
   // 📋 가이드라인 저장 — 백엔드 캠페인 행에 실제로 반영해야 새로고침/다른 기기에서도 유지된다.
   const saveGuidelines = async () => {
@@ -545,6 +566,7 @@ function App() {
                 ...inf,
                 ...(patch.feedback !== undefined ? { feedback: patch.feedback } : {}),
                 ...(patch.marketerResult !== undefined ? { marketerResult: patch.marketerResult } : {}),
+                ...(patch.review !== undefined ? { review: patch.review } : {}),
               }
             : inf,
         ),
@@ -688,8 +710,8 @@ function App() {
                 }}
                 onClick={() => setGuideOpen(!guideOpen)}
               >
-                <h3 style={{ margin: 0, fontSize: "14px" }}>
-                  📋 가이드라인 입력 {guideOpen ? "▲" : "▼"}
+                <h3 style={{ margin: 0, fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span className="step-badge">1</span> 가이드라인 입력 {guideOpen ? "▲" : "▼"}
                 </h3>
               </div>
               {guideOpen && (
@@ -702,6 +724,63 @@ function App() {
                   />
                 </div>
               )}
+            </div>
+
+            {/* 명단 대량 등록 섹션 (STEP 2) */}
+            <div
+              className="card"
+              style={{
+                backgroundColor: "#F7F9F5",
+                border: "2px dashed var(--stamp)",
+                padding: "20px",
+                marginBottom: "20px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "12px",
+                }}
+              >
+                <h3
+                  style={{ margin: 0, color: "var(--stamp)", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  <span className="step-badge">2</span> 인플루언서 명단 등록
+                </h3>
+                <button
+                  onClick={handleDownloadSample}
+                  style={{
+                    background: "#FFF",
+                    border: "1px solid var(--stamp)",
+                    color: "var(--stamp)",
+                    borderRadius: "4px",
+                    padding: "5px 10px",
+                    fontSize: "11px",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  📥 양식 엑셀 다운로드
+                </button>
+              </div>
+              <div
+                style={{
+                  background: "#FFF",
+                  padding: "8px",
+                  border: "1px solid var(--line)",
+                  borderRadius: "4px",
+                  display: "inline-block",
+                }}
+              >
+                <input
+                  type="file"
+                  accept=".csv, .xlsx, .xls"
+                  onChange={handleFileUpload}
+                  style={{ fontSize: "13px", cursor: "pointer" }}
+                />
+              </div>
             </div>
 
             {/* ⚡ [핵심 패치] 대시보드 최상단 실시간 검수 통계 스코어보드 그리드 */}
@@ -830,63 +909,6 @@ function App() {
                     ({passRate}%)
                   </span>
                 </div>
-              </div>
-            </div>
-
-            {/* 명단 대량 등록 섹션 */}
-            <div
-              className="card"
-              style={{
-                backgroundColor: "#F7F9F5",
-                border: "2px dashed var(--stamp)",
-                padding: "20px",
-                marginBottom: "20px",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: "12px",
-                }}
-              >
-                <h3
-                  style={{ margin: 0, color: "var(--stamp)", fontSize: "14px" }}
-                >
-                  📊 명단 대량 등록 매니저
-                </h3>
-                <button
-                  onClick={handleDownloadSample}
-                  style={{
-                    background: "#FFF",
-                    border: "1px solid var(--stamp)",
-                    color: "var(--stamp)",
-                    borderRadius: "4px",
-                    padding: "5px 10px",
-                    fontSize: "11px",
-                    fontWeight: "600",
-                    cursor: "pointer",
-                  }}
-                >
-                  📥 양식 엑셀 다운로드
-                </button>
-              </div>
-              <div
-                style={{
-                  background: "#FFF",
-                  padding: "8px",
-                  border: "1px solid var(--line)",
-                  borderRadius: "4px",
-                  display: "inline-block",
-                }}
-              >
-                <input
-                  type="file"
-                  accept=".csv, .xlsx, .xls"
-                  onChange={handleFileUpload}
-                  style={{ fontSize: "13px", cursor: "pointer" }}
-                />
               </div>
             </div>
 
@@ -1257,7 +1279,55 @@ function App() {
                           : "표시할 결과가 없습니다."}
                     </div>
                   ) : (() => {
-                    const occ = activeReview.occurrences || [];
+                    const occDraft = occDrafts[reviewTab];
+                    const occ = occDraft ?? activeReview.occurrences ?? [];
+                    // 아직 이 탭을 손대지 않았으면(occDraft가 없으면) 서버 원본을 복제해
+                    // 초안으로 승격시키고, 그 위에 편집을 적용한다.
+                    const mutateOcc = (fn) => {
+                      const base = (occDraft ?? (activeReview.occurrences || [])).map((o) => ({ ...o }));
+                      setOccDrafts((prev) => ({ ...prev, [reviewTab]: fn(base) }));
+                    };
+                    const saveEditedRow = (idx, content, fix) => {
+                      mutateOcc((base) =>
+                        base.map((o, i) =>
+                          i === idx
+                            ? { ...o, quote: content, fix, type: undefined, note: "", needsReview: false, manual: true }
+                            : o,
+                        ),
+                      );
+                      setEditingOccIdx(null);
+                    };
+                    const deleteRow = (idx) => mutateOcc((base) => base.filter((_, i) => i !== idx));
+                    const addRow = () => {
+                      const secs = parseInt(newRow.time, 10) || 0;
+                      const parts = [];
+                      if (newRow.checks.length) parts.push(newRow.checks.join(", "));
+                      if (newRow.quote.trim()) parts.push(`"${newRow.quote.trim()}"`);
+                      mutateOcc((base) =>
+                        [
+                          ...base,
+                          {
+                            timestamp: secs,
+                            source: newRow.source,
+                            quote: parts.join(" — ") || "(내용 미입력)",
+                            type: undefined,
+                            note: "",
+                            needsReview: Boolean(newRow.fix.trim()) || newRow.checks.length > 0,
+                            fix: newRow.fix.trim(),
+                          },
+                        ].sort((a, b) => a.timestamp - b.timestamp),
+                      );
+                      setAddRowOpen(false);
+                      setNewRow({ time: "", source: "자막", checks: [], quote: "", fix: "" });
+                    };
+                    const toggleCheck = (val) => {
+                      setNewRow((prev) => ({
+                        ...prev,
+                        checks: prev.checks.includes(val)
+                          ? prev.checks.filter((c) => c !== val)
+                          : [...prev.checks, val],
+                      }));
+                    };
                     const brandFlag = occ.some((o) => o.type === "brand" && o.needsReview);
                     const productFlag = occ.some((o) => o.type === "product" && o.needsReview);
                     const matchedCount = activeReview.matchedUsps?.length || 0;
@@ -1315,64 +1385,222 @@ function App() {
                             {activeReview.feedback}
                           </div>
                         )}
-                        {occ.length > 0 && (
+                        {(occ.length > 0 || canEditVerdict) && (
                           <div>
-                            <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>
-                              세부 발견 내역
+                            <div className="detail-hd-row">
+                              <div style={{ fontSize: "12px", fontWeight: 700 }}>세부 발견 내역</div>
                             </div>
-                            <table
-                              style={{
-                                width: "100%",
-                                borderCollapse: "collapse",
-                                fontSize: "11px",
-                              }}
-                            >
-                              <thead>
-                                <tr style={{ textAlign: "left", borderBottom: "1px solid var(--line)" }}>
-                                  <th style={{ padding: "4px 6px" }}>시간</th>
-                                  {reviewTab === "combined" && (
-                                    <th style={{ padding: "4px 6px" }}>출처</th>
-                                  )}
-                                  <th style={{ padding: "4px 6px" }}>내용</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {occ.map((o, idx) => (
-                                  <tr
-                                    key={idx}
-                                    style={{
-                                      borderBottom: "1px solid var(--line)",
-                                      background: o.needsReview ? "var(--warn-bg)" : undefined,
-                                    }}
-                                  >
-                                    <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
-                                      {formatTimestamp(o.timestamp)}
-                                    </td>
-                                    {reviewTab === "combined" && (
-                                      <td style={{ padding: "4px 6px", whiteSpace: "nowrap" }}>
-                                        {o.source === "자막" ? "🖼 자막" : "🎤 음성"}
-                                      </td>
-                                    )}
-                                    <td style={{ padding: "4px 6px" }}>
-                                      "{o.quote}"
-                                      {o.type && (
-                                        <span style={{ color: "var(--mute)" }}>
-                                          {" "}
-                                          ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
-                                          {o.note ? ` · ${o.note}` : ""})
-                                        </span>
-                                      )}
-                                      {o.needsReview && (
-                                        <span style={{ color: "var(--warn)", fontWeight: 600 }}>
-                                          {" "}
-                                          ⚠️ 등록된 표기와 정확히 일치하지 않음 — 원본 확인 필요
-                                        </span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                            {occ.length > 0 && (
+                              <div className="detail-wrap">
+                                <table className="detail-tbl">
+                                  <thead>
+                                    <tr>
+                                      <th>시간</th>
+                                      {reviewTab === "combined" && <th>출처</th>}
+                                      <th>내용</th>
+                                      <th>수정방향</th>
+                                      {canEditVerdict && <th></th>}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {occ.map((o, idx) => {
+                                      const isEditing = canEditVerdict && editingOccIdx === idx;
+                                      return (
+                                        <tr key={idx} style={{ background: o.needsReview ? "var(--warn-bg)" : undefined }}>
+                                          <td style={{ whiteSpace: "nowrap" }}>{formatTimestamp(o.timestamp)}</td>
+                                          {reviewTab === "combined" && (
+                                            <td style={{ whiteSpace: "nowrap" }}>
+                                              {o.source === "자막" ? "🖼 자막" : "🎤 음성"}
+                                            </td>
+                                          )}
+                                          {isEditing ? (
+                                            <>
+                                              <td>
+                                                <input
+                                                  className="occ-edit-in"
+                                                  defaultValue={o.quote}
+                                                  id={`occ-content-${idx}`}
+                                                />
+                                              </td>
+                                              <td>
+                                                <input
+                                                  className="occ-edit-in"
+                                                  defaultValue={o.fix || ""}
+                                                  placeholder="수정방향 입력"
+                                                  id={`occ-fix-${idx}`}
+                                                />
+                                              </td>
+                                              <td className="ops-cell">
+                                                <button
+                                                  type="button"
+                                                  className="occ-icon-btn"
+                                                  title="저장"
+                                                  onClick={() =>
+                                                    saveEditedRow(
+                                                      idx,
+                                                      document.getElementById(`occ-content-${idx}`).value,
+                                                      document.getElementById(`occ-fix-${idx}`).value,
+                                                    )
+                                                  }
+                                                >
+                                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                                    <path d="M5 12.5L10 17L19 7" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                                                  </svg>
+                                                </button>
+                                              </td>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <td>
+                                                "{o.quote}"
+                                                {o.type && (
+                                                  <span style={{ color: "var(--mute)" }}>
+                                                    {" "}
+                                                    ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
+                                                    {o.note ? ` · ${o.note}` : ""})
+                                                  </span>
+                                                )}
+                                                {o.needsReview && !o.manual && (
+                                                  <span style={{ color: "var(--warn)", fontWeight: 600 }}>
+                                                    {" "}
+                                                    ⚠️ 등록된 표기와 정확히 일치하지 않음 — 원본 확인 필요
+                                                  </span>
+                                                )}
+                                              </td>
+                                              <td className={`fix-cell${o.fix ? "" : " empty"}`}>{o.fix || "—"}</td>
+                                              {canEditVerdict && (
+                                                <td className="ops-cell">
+                                                  <button
+                                                    type="button"
+                                                    className="occ-icon-btn"
+                                                    title="수정"
+                                                    onClick={() => setEditingOccIdx(idx)}
+                                                  >
+                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                                      <path d="M4 20L4.6 16.5L15.3 5.8C15.9 5.2 16.9 5.2 17.5 5.8L18.2 6.5C18.8 7.1 18.8 8.1 18.2 8.7L7.5 19.4L4 20Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+                                                    </svg>
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    className="occ-icon-btn danger"
+                                                    title="삭제"
+                                                    onClick={() => deleteRow(idx)}
+                                                  >
+                                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                                                      <path d="M5 7H19M9 7V5C9 4.4 9.4 4 10 4H14C14.6 4 15 4.4 15 5V7M7 7L7.6 19C7.7 19.6 8.1 20 8.7 20H15.3C15.9 20 16.3 19.6 16.4 19L17 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                                    </svg>
+                                                  </button>
+                                                </td>
+                                              )}
+                                            </>
+                                          )}
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+
+                            {canEditVerdict && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="row-add-btn"
+                                  onClick={() => setAddRowOpen((v) => !v)}
+                                >
+                                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                                    <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+                                  </svg>
+                                  발견 내역 직접 추가
+                                </button>
+                                {addRowOpen && (
+                                  <div className="new-row-form">
+                                    <div className="nrf-grid">
+                                      <div className="k">시간</div>
+                                      <div className="time-in-wrap">
+                                        <input
+                                          className="in"
+                                          type="number"
+                                          min="0"
+                                          value={newRow.time}
+                                          placeholder="14"
+                                          onChange={(e) => setNewRow((p) => ({ ...p, time: e.target.value }))}
+                                        />
+                                        <span style={{ fontSize: "11px", color: "var(--mute)" }}>초</span>
+                                        <span className="time-preview">{formatTimestamp(newRow.time)}</span>
+                                      </div>
+
+                                      <div className="k">출처</div>
+                                      <div className="toggle-pair">
+                                        {["자막", "음성"].map((s) => (
+                                          <button
+                                            key={s}
+                                            type="button"
+                                            className={newRow.source === s ? "active" : ""}
+                                            onClick={() => setNewRow((p) => ({ ...p, source: s }))}
+                                          >
+                                            {s}
+                                          </button>
+                                        ))}
+                                      </div>
+
+                                      <div className="k">내용</div>
+                                      <div>
+                                        <div className="chk-row">
+                                          {[
+                                            ["brand", "브랜드명 표기 위반"],
+                                            ["product", "제품명 표기 위반"],
+                                            ["typo", "오탈자"],
+                                            ["etc", "기타"],
+                                          ].map(([val, label]) => (
+                                            <label key={val}>
+                                              <input
+                                                type="checkbox"
+                                                checked={newRow.checks.includes(label)}
+                                                onChange={() => toggleCheck(label)}
+                                              />
+                                              {label}
+                                            </label>
+                                          ))}
+                                        </div>
+                                        <input
+                                          className="in"
+                                          style={{ marginTop: "8px" }}
+                                          value={newRow.quote}
+                                          placeholder="영상에서 발견된 문구를 그대로 적어주세요 (선택)"
+                                          onChange={(e) => setNewRow((p) => ({ ...p, quote: e.target.value }))}
+                                        />
+                                      </div>
+
+                                      <div className="k">수정방향</div>
+                                      <input
+                                        className="in"
+                                        value={newRow.fix}
+                                        placeholder='예: "더운 날씨에 쓰기 좋은 우르오스 스킨브리지로션"으로 수정'
+                                        onChange={(e) => setNewRow((p) => ({ ...p, fix: e.target.value }))}
+                                      />
+
+                                      <div className="nrf-actions">
+                                        <button
+                                          type="button"
+                                          className="cancel"
+                                          onClick={() => {
+                                            setAddRowOpen(false);
+                                            setNewRow({ time: "", source: "자막", checks: [], quote: "", fix: "" });
+                                          }}
+                                        >
+                                          취소
+                                        </button>
+                                        <button type="button" className="confirm" onClick={addRow}>
+                                          표에 추가
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1396,7 +1624,7 @@ function App() {
                 >
                   {!isView && (
                     <div style={{ fontSize: "12px", marginBottom: "6px" }}>
-                      마케터 판정:{" "}
+                      마케터 코멘트:{" "}
                       <b style={{ color: modalInf.marketerResult === "통과" ? "#4CAF50" : modalInf.marketerResult === "반려" ? "var(--block)" : "var(--mute)" }}>
                         {modalInf.marketerResult || "-"}
                       </b>
@@ -1408,7 +1636,7 @@ function App() {
               {canEditVerdict && (
                 <>
                   <div style={{ fontSize: "12px", marginBottom: "6px" }}>
-                    마케터 판정:{" "}
+                    마케터 코멘트:{" "}
                     <b style={{ color: modalInf.marketerResult === "통과" ? "#4CAF50" : modalInf.marketerResult === "반려" ? "var(--block)" : "var(--mute)" }}>
                       {modalInf.marketerResult || "-"}
                     </b>
@@ -1443,6 +1671,7 @@ function App() {
                         const ok = await saveMarketerFeedback(modalInf.id, {
                           marketerResult: "반려",
                           feedback: feedbackText,
+                          review: applyOccurrenceEdits(rootReview, occDrafts),
                         });
                         if (ok) setSelectedInf(null);
                       }}
@@ -1456,6 +1685,7 @@ function App() {
                         const ok = await saveMarketerFeedback(modalInf.id, {
                           marketerResult: "통과",
                           feedback: feedbackText,
+                          review: applyOccurrenceEdits(rootReview, occDrafts),
                         });
                         if (ok) setSelectedInf(null);
                       }}

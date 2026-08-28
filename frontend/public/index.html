@@ -95,6 +95,44 @@
         .stat-card.bad .v .dot { background:var(--block); }
         .summary-line { font-size:12.5px; line-height:1.6; color:var(--graphite); background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:16px; }
 
+        /* ── 검수 대시보드: STEP 배지 ─────────────────────────── */
+        .step-row { display:flex; align-items:center; gap:10px; margin:22px 0 12px; }
+        .step-row:first-child { margin-top:0; }
+        .step-badge { flex:none; width:22px; height:22px; border-radius:50%; background:var(--ink); color:#fff; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; }
+        .step-title { font-size:14px; font-weight:800; }
+
+        /* ── 판정 상세 팝업: 세부 발견 내역 표 편집 ───────────────── */
+        .detail-wrap { overflow-x:auto; }
+        .detail-hd-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+        table.detail-tbl { width:100%; border-collapse:collapse; font-size:11px; min-width:460px; }
+        table.detail-tbl th { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); color:var(--mute); font-weight:700; white-space:nowrap; }
+        table.detail-tbl td { padding:6px; border-bottom:1px solid var(--line); vertical-align:top; }
+        table.detail-tbl td.fix-cell { color:var(--ink); }
+        table.detail-tbl td.fix-cell.empty { color:#C7C6C1; }
+        table.detail-tbl td.ops-cell { white-space:nowrap; text-align:right; }
+        .occ-icon-btn { border:none; background:transparent; width:24px; height:24px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; color:var(--mute); }
+        .occ-icon-btn:hover { background:var(--line2); color:var(--ink); }
+        .occ-icon-btn.danger:hover { background:var(--block-bg); color:var(--block); }
+        .occ-edit-in { width:100%; border:1px solid var(--ink); border-radius:6px; padding:4px 6px; font-size:11px; font-family:inherit; }
+        .row-add-btn { display:inline-flex; align-items:center; gap:6px; background:#fff; border:1px dashed var(--line); color:var(--graphite); border-radius:999px; padding:6px 13px; font-size:11px; font-weight:700; cursor:pointer; margin:8px 0 12px; }
+        .row-add-btn:hover { border-color:var(--ink); color:var(--ink); }
+        .new-row-form { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; background:var(--card); }
+        .nrf-grid { display:grid; grid-template-columns:60px 1fr; gap:8px 10px; align-items:start; }
+        .nrf-grid .k { font-size:10.5px; font-weight:700; color:var(--graphite); padding-top:7px; }
+        .time-in-wrap { display:flex; align-items:center; gap:6px; }
+        .time-in-wrap input { width:56px; }
+        .time-preview { font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:6px; padding:5px 8px; }
+        .toggle-pair { display:inline-flex; gap:2px; background:#fff; border:1px solid var(--line); border-radius:999px; padding:3px; justify-self:start; width:fit-content; }
+        .toggle-pair button { border:none; background:transparent; font-family:inherit; font-size:11px; font-weight:700; color:var(--graphite); padding:5px 12px; border-radius:999px; cursor:pointer; }
+        .toggle-pair button.active { background:var(--ink); color:#fff; }
+        .chk-row { display:flex; gap:10px; flex-wrap:wrap; }
+        .chk-row label { display:inline-flex; align-items:center; gap:5px; font-size:11px; color:var(--graphite); cursor:pointer; }
+        .chk-row input { width:13px; height:13px; accent-color:var(--ink); }
+        .nrf-actions { grid-column:1 / -1; display:flex; justify-content:flex-end; gap:8px; margin-top:2px; }
+        .nrf-actions button { border:none; font-family:inherit; font-size:11px; font-weight:700; padding:7px 13px; border-radius:999px; cursor:pointer; }
+        .nrf-actions .cancel { background:transparent; color:var(--graphite); }
+        .nrf-actions .confirm { background:var(--ink); color:#fff; }
+
         /* ── 업로드 진행률 ───────────────────────────────────── */
         .upload-row { display:flex; justify-content:space-between; font-size:11px; margin-bottom:5px; }
         .upload-row .pct { font-weight:700; font-variant-numeric:tabular-nums; }

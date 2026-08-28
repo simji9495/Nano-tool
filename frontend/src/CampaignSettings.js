@@ -50,21 +50,21 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
             <div className="grid2">
                 <div>
                     <label className="lab">정확한 브랜드 표기명</label>
-                    <input className="in" value={campaign.brand} onChange={(e) => setCampaign({ ...campaign, brand: e.target.value })} />
+                    <input className="in" placeholder="예: 우르오스" value={campaign.brand} onChange={(e) => setCampaign({ ...campaign, brand: e.target.value })} />
                 </div>
                 <div>
                     <label className="lab">정확한 제품 표기명</label>
-                    <input className="in" value={campaign.product} onChange={(e) => setCampaign({ ...campaign, product: e.target.value })} />
+                    <input className="in" placeholder="예: 스킨 브리지 로션" value={campaign.product} onChange={(e) => setCampaign({ ...campaign, product: e.target.value })} />
                 </div>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--mute)', marginTop: '8px' }}>
+                *브랜드명, 제품명을 정확히 기입해주세요. 기입하신 브랜드명, 제품명을 기준으로 영상 자막을 검수합니다.
             </div>
             <div style={{ marginTop: '20px' }}>
                 <label className="lab">필수 포함 사항</label>
-                <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '6px' }}>
-                    *오디오 또는 자막에 반드시 포함되어야 하는 제품 USP 등을 기입해주세요.
-                </div>
                 {campaign.usps.map((usp, i) => (
                     <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
-                        <input className="in" value={usp} onChange={(e) => {
+                        <input className="in" placeholder="예: 워터타입으로 산뜻한 사용감" value={usp} onChange={(e) => {
                             let newUsps = [...campaign.usps]; newUsps[i] = e.target.value; setCampaign({ ...campaign, usps: newUsps });
                         }} />
                         <button type="button" onClick={() => setCampaign({ ...campaign, usps: campaign.usps.filter((_, idx) => idx !== i) })}
@@ -73,6 +73,9 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
                         </button>
                     </div>
                 ))}
+                <div style={{ fontSize: '11px', color: 'var(--mute)', margin: '6px 0 10px' }}>
+                    *오디오 또는 자막에 반드시 포함되어야 하는 제품 USP 등을 기입해주세요.
+                </div>
                 <button type="button" onClick={() => setCampaign({ ...campaign, usps: [...campaign.usps, ''] })}
                     style={{ background: '#FFF', border: '1px solid var(--stamp)', color: 'var(--stamp)', borderRadius: '4px', padding: '5px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
                     + USP 추가
@@ -80,13 +83,6 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
             </div>
             <div style={{ marginTop: '15px' }}>
                 <label className="lab">금지 사항</label>
-                <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '6px' }}>
-                    *자주 쓰는 금칙은 아래 버튼으로 빠르게 추가하세요.
-                    <br />
-                    *그 외 개념적인 금지 사항(예: "자극감 언급")은 아래 입력란에 직접 적으면 문맥을 고려해 검수합니다
-                    <br />
-                    — "화한 느낌"은 찾아서 반려시키지만 "화한 느낌 없어서 좋아요" 같은 표현은 문맥을 고려하여 통과시킵니다.
-                </div>
                 {!showCompetitor && (
                     <div style={{ marginBottom: '10px' }}>
                         <div style={{ fontSize: '10px', fontWeight: 700, color: '#FF9800', letterSpacing: '0.02em', marginBottom: '4px' }}>
@@ -145,7 +141,7 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
                 )}
                 {campaign.bans.map((ban, i) => (
                     <div key={i} style={{ display: 'flex', gap: '6px', marginBottom: '5px' }}>
-                        <input className="in" style={{ borderColor: 'var(--block)' }} value={ban} onChange={(e) => {
+                        <input className="in" style={{ borderColor: 'var(--block)' }} placeholder="예: 자극적인 사용감 언급" value={ban} onChange={(e) => {
                             let newBans = [...campaign.bans]; newBans[i] = e.target.value; setCampaign({ ...campaign, bans: newBans });
                         }} />
                         <button type="button" onClick={() => setCampaign({ ...campaign, bans: campaign.bans.filter((_, idx) => idx !== i) })}
@@ -154,6 +150,13 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
                         </button>
                     </div>
                 ))}
+                <div style={{ fontSize: '11px', color: 'var(--mute)', margin: '6px 0 10px' }}>
+                    *자주 쓰는 금칙은 버튼으로 빠르게 추가하세요.
+                    <br />
+                    *그 외 개념적인 금지 사항(예: "자극감 언급")은 입력란에 직접 적으면 문맥을 고려해 검수합니다
+                    <br />
+                    예를 들어, "화한 느낌"은 찾아서 반려시키지만 "화한 느낌 없어서 좋아요" 같은 표현은 문맥을 고려하여 통과시킵니다.
+                </div>
                 <button type="button" onClick={() => setCampaign({ ...campaign, bans: [...campaign.bans, ''] })}
                     style={{ background: '#FFF', border: '1px solid var(--block)', color: 'var(--block)', borderRadius: '4px', padding: '5px 10px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
                     + 금칙 항목 추가
