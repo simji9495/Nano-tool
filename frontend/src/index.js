@@ -1434,7 +1434,17 @@ function App() {
                           const needsAttention = indexed.filter(({ o }) => isFlagged(o));
                           const compliant = indexed.filter(({ o }) => !isFlagged(o));
 
-                          const renderRows = (rows) =>
+                          // 가이드 준수 내역은 "왜 준수로 판단했는지"를 보여주는 표라
+                          // 수정방향이 아니라 그 근거(예: "USP · 워터타입으로 산뜻한
+                          // 사용감이 언급됨")를 보여준다.
+                          const complianceLabel = (o) => {
+                            const label = o.type ? OCCURRENCE_TYPE_LABEL[o.type] || o.type : "";
+                            if (o.note) return label ? `${label} · ${o.note}` : o.note;
+                            if (label) return `${label} 언급 확인됨`;
+                            return o.fix || "확인됨";
+                          };
+
+                          const renderRows = (rows, variant) =>
                             rows.map(({ o, idx }) => {
                               const isEditing = canEditVerdict && editingOccIdx === idx;
                               return (
@@ -1453,8 +1463,8 @@ function App() {
                                       <td>
                                         <input
                                           className="occ-edit-in"
-                                          defaultValue={o.fix || ""}
-                                          placeholder="수정방향 입력"
+                                          defaultValue={variant === "compliant" ? complianceLabel(o) : o.fix || ""}
+                                          placeholder={variant === "compliant" ? "가이드 준수 내용 입력" : "수정방향 입력"}
                                           id={`occ-fix-${idx}`}
                                         />
                                       </td>
@@ -1481,7 +1491,7 @@ function App() {
                                     <>
                                       <td>
                                         "{o.quote}"
-                                        {o.type && (
+                                        {variant !== "compliant" && o.type && (
                                           <span style={{ color: "var(--mute)" }}>
                                             {" "}
                                             ({OCCURRENCE_TYPE_LABEL[o.type] || o.type}
@@ -1495,7 +1505,11 @@ function App() {
                                           </span>
                                         )}
                                       </td>
-                                      <td className={`fix-cell${o.fix ? "" : " empty"}`}>{o.fix || "—"}</td>
+                                      {variant === "compliant" ? (
+                                        <td className="fix-cell">{complianceLabel(o)}</td>
+                                      ) : (
+                                        <td className={`fix-cell${o.fix ? "" : " empty"}`}>{o.fix || "—"}</td>
+                                      )}
                                       {canEditVerdict && (
                                         <td className="ops-cell">
                                           <button
@@ -1526,7 +1540,7 @@ function App() {
                               );
                             });
 
-                          const renderTable = (rows) => (
+                          const renderTable = (rows, variant) => (
                             <div className="detail-wrap">
                               <table className="detail-tbl">
                                 <thead>
@@ -1534,11 +1548,11 @@ function App() {
                                     <th>시간</th>
                                     {reviewTab === "combined" && <th>출처</th>}
                                     <th>내용</th>
-                                    <th>수정방향</th>
+                                    <th>{variant === "compliant" ? "가이드 준수" : "수정방향"}</th>
                                     {canEditVerdict && <th></th>}
                                   </tr>
                                 </thead>
-                                <tbody>{renderRows(rows)}</tbody>
+                                <tbody>{renderRows(rows, variant)}</tbody>
                               </table>
                             </div>
                           );
@@ -1554,7 +1568,7 @@ function App() {
                                 </div>
                               </div>
                               {needsAttention.length > 0 ? (
-                                renderTable(needsAttention)
+                                renderTable(needsAttention, "attention")
                               ) : (
                                 <div style={{ fontSize: "12px", color: "var(--mute)", marginBottom: "14px" }}>
                                   수정이 필요한 항목이 없습니다.
@@ -1565,7 +1579,7 @@ function App() {
                                   <div className="detail-hd-row" style={{ marginTop: "14px" }}>
                                     <div style={{ fontSize: "12px", fontWeight: 700 }}>가이드 준수 내역</div>
                                   </div>
-                                  {renderTable(compliant)}
+                                  {renderTable(compliant, "compliant")}
                                 </>
                               )}
                             </>
