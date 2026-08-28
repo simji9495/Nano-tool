@@ -1,5 +1,5 @@
 /**
- * REELCHECK 검수 서버
+ * InCensor 검수 서버
  *  POST /api/transcribe  영상/오디오 → 타임코드 붙은 전사 (OpenAI)
  *  POST /api/frames      영상 → 장면 단위 키프레임 (claude-real-video)
  *  POST /api/inspect     위 둘을 한 번에 (프론트엔드가 쓰는 엔드포인트)
@@ -1278,7 +1278,7 @@ app.post("/api/inspect", upload.single("video"), async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`REELCHECK 검수 서버 실행 중 → http://localhost:${PORT}`);
+  console.log(`InCensor 검수 서버 실행 중 → http://localhost:${PORT}`);
   console.log(`설치 상태 확인 → http://localhost:${PORT}/api/health`);
 
   await verifyR2Connection();
