@@ -980,14 +980,14 @@ function App() {
                           onClick={() => {
                             setFeedbackMode("edit");
                             setSelectedInf(inf);
-                            setFeedbackText(inf.feedback || "");
+                            setFeedbackText("");
                           }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               setFeedbackMode("edit");
                               setSelectedInf(inf);
-                              setFeedbackText(inf.feedback || "");
+                              setFeedbackText("");
                             }
                           }}
                         >
@@ -1082,14 +1082,14 @@ function App() {
                         onClick={() => {
                           setFeedbackMode("edit");
                           setSelectedInf(inf);
-                          setFeedbackText(inf.feedback || "");
+                          setFeedbackText("");
                         }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             setFeedbackMode("edit");
                             setSelectedInf(inf);
-                            setFeedbackText(inf.feedback || "");
+                            setFeedbackText("");
                           }
                         }}
                       >
