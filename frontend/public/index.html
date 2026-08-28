@@ -104,7 +104,8 @@
         /* ── 판정 상세 팝업: 세부 발견 내역 표 편집 ───────────────── */
         .detail-wrap { overflow-x:auto; }
         .detail-hd-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
-        table.detail-tbl { width:100%; border-collapse:collapse; font-size:11px; min-width:460px; }
+        table.detail-tbl { width:100%; table-layout:fixed; border-collapse:collapse; font-size:11px; min-width:460px; }
+        table.detail-tbl td { overflow-wrap:break-word; }
         table.detail-tbl th { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); color:var(--mute); font-weight:700; white-space:nowrap; }
         table.detail-tbl td { padding:6px; border-bottom:1px solid var(--line); vertical-align:top; }
         table.detail-tbl td.fix-cell { color:var(--ink); }

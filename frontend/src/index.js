@@ -1621,6 +1621,13 @@ function App() {
                           const renderTable = (rows, variant) => (
                             <div className="detail-wrap">
                               <table className="detail-tbl">
+                                <colgroup>
+                                  <col style={{ width: "72px" }} />
+                                  {reviewTab === "combined" && <col style={{ width: "60px" }} />}
+                                  <col />
+                                  <col style={{ width: "210px" }} />
+                                  {canEditVerdict && <col style={{ width: "60px" }} />}
+                                </colgroup>
                                 <thead>
                                   <tr>
                                     <th>시간</th>
