@@ -1653,9 +1653,9 @@ function App() {
                                 </div>
                               )}
                               {modalInf.marketerResult === "반려" && (
-                                <div style={{ marginBottom: "14px" }}>
-                                  <button type="button" className="icon-action" onClick={copyRejectionText}>
-                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                                <div className="action-block">
+                                  <button type="button" className="icon-action dark sm" onClick={copyRejectionText}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
                                       <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.8" />
                                       <path d="M16 8V6C16 4.9 15.1 4 14 4H6C4.9 4 4 4.9 4 6V14C4 15.1 4.9 16 6 16H8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                                     </svg>
