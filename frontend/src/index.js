@@ -1424,11 +1424,6 @@ function App() {
                           ))}
                         </div>
                         <div className="summary-line">{summaryText}</div>
-                        {activeReview.feedback && (
-                          <div style={{ fontSize: "12px", lineHeight: 1.6, marginBottom: "12px" }}>
-                            {activeReview.feedback}
-                          </div>
-                        )}
                         {(occ.length > 0 || canEditVerdict) && (() => {
                           // 가이드를 지킨 구간(정확 표기·충족 USP)과 손봐야 할 구간(표기
                           // 확인 필요·금지 사항 위반·오탈자 의심)을 한 표에 섞어두면
