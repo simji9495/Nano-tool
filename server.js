@@ -167,9 +167,23 @@ async function cleanupOrphanedUploads() {
       new ListObjectsV2Command({ Bucket: R2_BUCKET, Prefix: UPLOADS_PREFIX, MaxKeys: 1000 }),
     );
     const now = Date.now();
-    const stale = (Contents || [])
-      .filter((o) => o.Key && o.LastModified && now - new Date(o.LastModified).getTime() > ORPHAN_MAX_AGE_MS)
-      .map((o) => ({ Key: o.Key }));
+    const staleCandidates = (Contents || []).filter(
+      (o) => o.Key && o.LastModified && now - new Date(o.LastModified).getTime() > ORPHAN_MAX_AGE_MS,
+    );
+    if (!staleCandidates.length) return;
+
+    // 검수 완료 후 마케터 최종 판정을 기다리며 "의도적으로" 남겨둔 영상은
+    // reelcheck_influencers.video_path에 그대로 남아있다 — 오래됐다고
+    // 지우면 안 된다(마케터가 통과를 누를 때 별도로 지워진다).
+    let keepKeys = new Set();
+    if (supabase) {
+      const { data } = await supabase
+        .from("reelcheck_influencers")
+        .select("video_path")
+        .not("video_path", "is", null);
+      keepKeys = new Set((data || []).map((r) => r.video_path));
+    }
+    const stale = staleCandidates.filter((o) => !keepKeys.has(o.Key)).map((o) => ({ Key: o.Key }));
     if (stale.length) {
       await r2.send(new DeleteObjectsCommand({ Bucket: R2_BUCKET, Delete: { Objects: stale } }));
       console.log(`[R2] 고아 업로드 파일 ${stale.length}건 정리`);
@@ -958,6 +972,27 @@ app.get("/api/influencers/:id", requireSupabase, async (req, res) => {
   res.json(data);
 });
 
+/* 마케터가 원본 영상을 재생해볼 수 있도록, R2에 남겨둔 영상의 임시 재생
+ * URL을 발급한다. 마케터가 최종 "통과" 판정을 내리면 영상 자체가
+ * 삭제되므로(아래 PATCH 참고) 그 전까지만 유효하다. */
+app.get("/api/influencers/:id/video-url", requireSupabase, requireR2, async (req, res) => {
+  const { data, error } = await supabase
+    .from("reelcheck_influencers")
+    .select("video_path")
+    .eq("id", req.params.id)
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data?.video_path) return res.status(404).json({ error: "보관된 영상이 없습니다." });
+  try {
+    const url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: data.video_path }), {
+      expiresIn: 3600,
+    });
+    res.json({ url });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
   const { status, result, feedback, videoName, transcript, review, marketerResult } = req.body || {};
   const patch = {};
@@ -976,6 +1011,19 @@ app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // 마케터가 최종 "통과" 판정을 내리면, 더 이상 원본 영상을 보관할 이유가
+  // 없다 — 스토리지에서 지우고 참조도 비운다.
+  if (marketerResult === "통과" && r2 && data?.video_path) {
+    const stalePath = data.video_path;
+    r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: stalePath }))
+      .then(() =>
+        supabase.from("reelcheck_influencers").update({ video_path: null }).eq("id", req.params.id),
+      )
+      .catch((e) => console.warn(`[R2] 통과 처리 후 영상 삭제 실패: ${e.message}`));
+    data.video_path = null;
+  }
+
   res.json(data);
 });
 
@@ -1221,8 +1269,17 @@ app.post("/api/transcribe/from-storage", requireR2, async (req, res) => {
     try {
       const { Body } = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: storagePath }));
       await pipeline(Body, createWriteStream(videoPath));
-      // 로컬로 잘 받았으니 R2엔 더 필요 없다 — 바로 정리한다.
-      r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: storagePath })).catch(() => {});
+      // 마케터가 원본 영상과 대조해볼 수 있도록 R2에는 그대로 남겨두고, 어떤
+      // 파일인지 나중에 찾을 수 있게 인플루언서 행에 경로만 기록해둔다. 실제
+      // 삭제는 마케터가 최종 "통과" 판정을 내릴 때(PATCH /api/influencers/:id)
+      // 이뤄진다.
+      if (supabase && influencerId) {
+        await supabase
+          .from("reelcheck_influencers")
+          .update({ video_path: storagePath })
+          .eq("id", influencerId)
+          .then(() => {}, () => {});
+      }
     } catch (e) {
       throw new Error(`스토리지에서 파일을 받지 못했습니다: ${e.message}`);
     }

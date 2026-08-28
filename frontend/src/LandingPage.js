@@ -198,7 +198,7 @@ export default function LandingPage({ onGetStarted }) {
               </div>
               <div className="item">
                 <h3>영상 원본은 보관되나요?</h3>
-                <p>검수 후 삭제됩니다. 판정 결과와 근거 텍스트만 남습니다.</p>
+                <p>마케터가 원본과 대조해볼 수 있도록 최종 판정 전까지는 보관됩니다. 마케터가 통과 판정을 내리면 영상은 시스템에서 자동 삭제되고, 판정 결과와 근거 텍스트만 남습니다.</p>
               </div>
             </div>
           </div>

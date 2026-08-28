@@ -166,6 +166,36 @@ function App() {
   const [newRow, setNewRow] = useState({ time: "", source: "자막", checks: [], quote: "", fix: "" });
   const [toast, setToast] = useState(null); // { type: "success"|"error"|"info", title, desc }
   const toastTimerRef = useRef(null);
+  const [videoUrl, setVideoUrl] = useState(null);
+  const [videoUnavailable, setVideoUnavailable] = useState(false);
+  const videoRef = useRef(null);
+
+  // 마케터가 통과 판정을 내리기 전까지 R2에 남아있는 원본 영상의 임시 재생
+  // 링크를 팝업을 열 때마다 새로 받아온다 — 통과 처리되면 서버에서 영상
+  // 자체가 지워지므로, 이 시점에 없으면 그냥 "보관된 영상 없음"으로 둔다.
+  useEffect(() => {
+    setVideoUrl(null);
+    setVideoUnavailable(false);
+    if (!selectedInf?.id) return;
+    let cancelled = false;
+    fetch(`${API_BASE}/api/influencers/${selectedInf.id}/video-url`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => {
+        if (!cancelled) setVideoUrl(d.url);
+      })
+      .catch(() => {
+        if (!cancelled) setVideoUnavailable(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedInf?.id]);
+
+  const seekVideo = (seconds) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = seconds;
+    videoRef.current.play().catch(() => {});
+  };
 
   // 브라우저 기본 alert() 대신 쓰는 커스텀 알림. 4초 후 자동으로 사라지고,
   // 연달아 호출되면 이전 타이머를 취소하고 새로 띄운다.
@@ -1228,15 +1258,25 @@ function App() {
             onClick={() => setSelectedInf(null)}
           >
             <div
-              className="card"
+              className="card verdict-modal"
               style={{
-                width: "min(720px, 94vw)",
+                width: "min(980px, 96vw)",
                 maxHeight: "85vh",
-                overflowY: "auto",
-                padding: "20px",
+                padding: 0,
               }}
               onClick={(e) => e.stopPropagation()}
             >
+              <div className="video-pane">
+                {videoUrl ? (
+                  <video ref={videoRef} src={videoUrl} controls className="video-el" />
+                ) : (
+                  <div className="video-placeholder">
+                    {videoUnavailable ? "보관된 영상이 없습니다" : "영상 불러오는 중..."}
+                  </div>
+                )}
+                <div className="video-meta">마케터가 통과 판정하면 영상은 시스템에서 자동 삭제됩니다</div>
+              </div>
+              <div className="content-pane">
               <div
                 style={{
                   display: "flex",
@@ -1533,7 +1573,20 @@ function App() {
                               const isEditing = canEditVerdict && editingOccIdx === idx;
                               return (
                                 <tr key={idx} style={{ background: o.needsReview ? "var(--warn-bg)" : undefined }}>
-                                  <td style={{ whiteSpace: "nowrap" }}>{formatTimestamp(o.timestamp)}</td>
+                                  <td style={{ whiteSpace: "nowrap" }}>
+                                    <button
+                                      type="button"
+                                      className="ts-btn"
+                                      disabled={!videoUrl}
+                                      onClick={() => seekVideo(o.timestamp)}
+                                      title={videoUrl ? "이 지점부터 재생" : "보관된 영상이 없습니다"}
+                                    >
+                                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none">
+                                        <path d="M8 5L19 12L8 19V5Z" fill="currentColor" />
+                                      </svg>
+                                      {formatTimestamp(o.timestamp)}
+                                    </button>
+                                  </td>
                                   {reviewTab === "combined" && (
                                     <td style={{ whiteSpace: "nowrap" }}>
                                       {o.source === "자막" ? "🖼 자막" : "🎤 음성"}
@@ -1627,7 +1680,7 @@ function App() {
                             <div className="detail-wrap">
                               <table className="detail-tbl">
                                 <colgroup>
-                                  <col style={{ width: "72px" }} />
+                                  <col style={{ width: "82px" }} />
                                   {reviewTab === "combined" && <col style={{ width: "60px" }} />}
                                   <col />
                                   <col style={{ width: "210px" }} />
@@ -1655,7 +1708,9 @@ function App() {
                                   <span className="label">수정 필요 사항</span>
                                   {needsAttention.length > 0 && <span className="count">{needsAttention.length}건</span>}
                                 </div>
-                                <div className="sub-note">이 표를 중심으로 검토해주세요</div>
+                                <div className="sub-note">
+                                  이 표를 중심으로 검토해주세요 · 시간을 클릭하면 영상이 해당 구간으로 이동합니다
+                                </div>
                                 {needsAttention.length > 0 ? (
                                   renderTable(needsAttention, "attention")
                                 ) : (
@@ -1784,6 +1839,7 @@ function App() {
                                     <span className="label">가이드 준수 내역</span>
                                     <span className="count">{compliant.length}건</span>
                                   </div>
+                                  <div className="sub-note">시간을 클릭하면 영상이 해당 구간으로 이동합니다</div>
                                   {renderTable(compliant, "compliant")}
                                 </div>
                               )}
@@ -1888,6 +1944,7 @@ function App() {
                 >
                   닫기
                 </button>
+              </div>
               </div>
             </div>
           </div>
