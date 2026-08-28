@@ -262,9 +262,18 @@ function App() {
   const applyOccurrenceEdits = (rootReview, drafts) => {
     if (!rootReview || !drafts || !Object.keys(drafts).length) return rootReview;
     const updated = { ...rootReview };
-    if (drafts.combined) updated.occurrences = drafts.combined;
+    const hasSplit = "audio" in rootReview || "caption" in rootReview;
     if (drafts.audio && updated.audio) updated.audio = { ...updated.audio, occurrences: drafts.audio };
     if (drafts.caption && updated.caption) updated.caption = { ...updated.caption, occurrences: drafts.caption };
+    if (hasSplit && (drafts.audio || drafts.caption)) {
+      // 종합은 음성/자막 탭의 (편집된) 내역을 합친 것으로 저장한다 — 화면에
+      // 보여준 것과 저장되는 것이 항상 같아야 한다.
+      updated.occurrences = [...(updated.audio?.occurrences || []), ...(updated.caption?.occurrences || [])].sort(
+        (a, b) => a.timestamp - b.timestamp,
+      );
+    } else if (drafts.combined) {
+      updated.occurrences = drafts.combined;
+    }
     return updated;
   };
 
@@ -1279,58 +1288,52 @@ function App() {
                           : "표시할 결과가 없습니다."}
                     </div>
                   ) : (() => {
-                    const occDraft = occDrafts[reviewTab];
-                    const occ = occDraft ?? activeReview.occurrences ?? [];
-                    // 아직 이 탭을 손대지 않았으면(occDraft가 없으면) 서버 원본을 복제해
-                    // 초안으로 승격시키고, 그 위에 편집을 적용한다.
-                    const mutateOcc = (fn) => {
-                      const base = (occDraft ?? (activeReview.occurrences || [])).map((o) => ({ ...o }));
-                      setOccDrafts((prev) => ({ ...prev, [reviewTab]: fn(base) }));
-                    };
-                    // 종합 탭에서 지우거나 고친 항목은, 같은 항목이 원래 나온 출처
-                    // 탭(음성/자막)에도 그대로 반영한다 — timestamp+quote로 같은
-                    // 항목을 찾는다(음성/자막 판정은 별도 AI 호출 결과라 완전히
-                    // 새로 만든 항목이나 LLM이 표현을 살짝 다르게 쓴 항목은 못
-                    // 찾을 수 있다 — 그 경우 해당 탭은 그대로 둔다).
-                    const propagateToSubTab = (source, timestamp, quote, updater) => {
-                      const subKey = source === "자막" ? "caption" : "audio";
-                      const subReview = rootReview?.[subKey];
-                      if (!subReview) return;
-                      setOccDrafts((prev) => {
-                        const subBase = (prev[subKey] ?? (subReview.occurrences || [])).map((o) => ({ ...o }));
-                        const idx = subBase.findIndex((o) => o.timestamp === timestamp && o.quote === quote);
-                        if (idx === -1) return prev;
-                        return { ...prev, [subKey]: updater(subBase, idx) };
-                      });
+                    // 음성/자막이 분리 저장된 리뷰(hasSplitReview)는 "종합" 탭을 따로
+                    // 초안으로 관리하지 않는다 — 음성/자막 각각의 (편집된) 내역을
+                    // 합쳐서 매번 다시 계산한다. 그래야 어느 탭에서 고치든 항상
+                    // 종합 탭에 다 보이고, 종합 탭 하나만 봐도 전체가 파악된다.
+                    // 구버전 리뷰(분리 전)만 "combined" 키에 자체 초안을 둔다.
+                    const draftFallback = (key) =>
+                      key === "audio"
+                        ? rootReview?.audio?.occurrences
+                        : key === "caption"
+                          ? rootReview?.caption?.occurrences
+                          : activeReview.occurrences;
+                    const occ = !hasSplitReview
+                      ? occDrafts.combined ?? activeReview.occurrences ?? []
+                      : reviewTab === "combined"
+                        ? [
+                            ...(occDrafts.audio ?? draftFallback("audio") ?? []),
+                            ...(occDrafts.caption ?? draftFallback("caption") ?? []),
+                          ].sort((a, b) => a.timestamp - b.timestamp)
+                        : occDrafts[reviewTab] ?? activeReview.occurrences ?? [];
+
+                    // 항목의 출처(source)로 실제 초안이 어디 있는지 정한다 — 종합 탭이든
+                    // 음성/자막 탭이든 같은 규칙이라, 어느 탭에서 고쳐도 결과가 같다.
+                    const draftKeyFor = (o) =>
+                      !hasSplitReview ? "combined" : o.source === "자막" ? "caption" : "audio";
+                    const mutateDraft = (key, fn) => {
+                      const base = (occDrafts[key] ?? draftFallback(key) ?? []).map((o) => ({ ...o }));
+                      setOccDrafts((prev) => ({ ...prev, [key]: fn(base) }));
                     };
                     const saveEditedRow = (idx, content, fix) => {
                       const target = occ[idx];
-                      mutateOcc((base) =>
-                        base.map((o, i) =>
-                          i === idx
+                      if (!target) return;
+                      mutateDraft(draftKeyFor(target), (base) =>
+                        base.map((o) =>
+                          o.timestamp === target.timestamp && o.quote === target.quote
                             ? { ...o, quote: content, fix, type: undefined, note: "", needsReview: false, manual: true }
                             : o,
                         ),
                       );
-                      if (reviewTab === "combined" && target) {
-                        propagateToSubTab(target.source, target.timestamp, target.quote, (subBase, subIdx) =>
-                          subBase.map((o, i) =>
-                            i === subIdx
-                              ? { ...o, quote: content, fix, type: undefined, note: "", needsReview: false, manual: true }
-                              : o,
-                          ),
-                        );
-                      }
                       setEditingOccIdx(null);
                     };
                     const deleteRow = (idx) => {
                       const target = occ[idx];
-                      mutateOcc((base) => base.filter((_, i) => i !== idx));
-                      if (reviewTab === "combined" && target) {
-                        propagateToSubTab(target.source, target.timestamp, target.quote, (subBase, subIdx) =>
-                          subBase.filter((_, i) => i !== subIdx),
-                        );
-                      }
+                      if (!target) return;
+                      mutateDraft(draftKeyFor(target), (base) =>
+                        base.filter((o) => !(o.timestamp === target.timestamp && o.quote === target.quote)),
+                      );
                     };
                     const addRow = () => {
                       const secs = parseInt(newRow.time, 10) || 0;
@@ -1346,19 +1349,9 @@ function App() {
                         needsReview: Boolean(newRow.fix.trim()) || newRow.checks.length > 0,
                         fix: newRow.fix.trim(),
                       };
-                      mutateOcc((base) => [...base, newItem].sort((a, b) => a.timestamp - b.timestamp));
-                      if (reviewTab === "combined") {
-                        const subKey = newRow.source === "자막" ? "caption" : "audio";
-                        if (rootReview?.[subKey]) {
-                          setOccDrafts((prev) => {
-                            const subBase = (prev[subKey] ?? (rootReview[subKey].occurrences || [])).map((o) => ({ ...o }));
-                            return {
-                              ...prev,
-                              [subKey]: [...subBase, { ...newItem }].sort((a, b) => a.timestamp - b.timestamp),
-                            };
-                          });
-                        }
-                      }
+                      mutateDraft(draftKeyFor(newItem), (base) =>
+                        [...base, newItem].sort((a, b) => a.timestamp - b.timestamp),
+                      );
                       setAddRowOpen(false);
                       setNewRow({ time: "", source: "자막", checks: [], quote: "", fix: "" });
                     };
