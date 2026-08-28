@@ -1158,16 +1158,18 @@ function App() {
                     <td>
                       <span
                         className={`st ${inf.marketerResult === "통과" ? "pass" : !inf.marketerResult ? "none" : "block"}`}
-                        role="button"
-                        tabIndex={0}
-                        title="마케터 판정 내리기/확인"
-                        style={{ cursor: "pointer" }}
+                        role={inf.marketerResult ? "button" : undefined}
+                        tabIndex={inf.marketerResult ? 0 : undefined}
+                        title={inf.marketerResult ? "마케터 코멘트 확인" : undefined}
+                        style={inf.marketerResult ? { cursor: "pointer" } : undefined}
                         onClick={() => {
+                          if (!inf.marketerResult) return;
                           setFeedbackMode("edit");
                           setSelectedInf(inf);
                           setFeedbackText("");
                         }}
                         onKeyDown={(e) => {
+                          if (!inf.marketerResult) return;
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
                             setFeedbackMode("edit");
