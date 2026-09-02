@@ -49,17 +49,24 @@ const app = express();
  * 많아 짧은 시간에 호출이 몰리면(예: 60장 중 56장 검증) 계정 분당 토큰 한도가
  * 통째로 바닥나 10초 넘게도 안 풀릴 수 있다 — 재시도 없이 바로 실패시키면
  * 잠깐만 더 기다리면 될 일에 자막 검수 전체를 놓치게 된다. */
+/* 429(한도 초과)를 맞은 요청이 그 자리에서 대기하며 동시 실행 자리를 계속
+ * 붙들고 있으면, 뒤에 줄 서 있는 다른 영상들까지 덩달아 막혀버린다. 그래서
+ * 429가 나면 자리를 즉시 비우고(withOpenAISlot, 아래에서 정의) 대기 시간만큼
+ * 기다린 뒤 큐 맨 뒤로 다시 줄을 세운다 — 순서 보장보다 전체 처리량을
+ * 우선한다. */
 async function fetchOpenAIWithRetry(url, options, { retries = 6, baseDelayMs = 1500 } = {}) {
-  for (let attempt = 0; ; attempt++) {
-    const r = await fetch(url, options);
-    if (r.status !== 429 || attempt >= retries) return r;
+  const attempt = async (n) => {
+    const r = await withOpenAISlot(() => fetch(url, options));
+    if (r.status !== 429 || n >= retries) return r;
     const retryAfterSec = Number(r.headers.get("retry-after"));
     const waitMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
       ? retryAfterSec * 1000
-      : baseDelayMs * (attempt + 1);
-    console.warn(`[OpenAI] 429 요청 한도 초과 — ${waitMs}ms 대기 후 재시도 (${attempt + 1}/${retries})`);
+      : baseDelayMs * (n + 1);
+    console.warn(`[OpenAI] 429 요청 한도 초과 — ${waitMs}ms 후 다시 줄을 섭니다 (${n + 1}/${retries})`);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
-  }
+    return attempt(n + 1);
+  };
+  return attempt(0);
 }
 
 const PORT = process.env.PORT || 8787;
@@ -238,6 +245,18 @@ function createSemaphore(limit) {
     });
 }
 const withCompressionSlot = createSemaphore(Number(process.env.MAX_CONCURRENT_COMPRESSIONS) || 2);
+
+/* 키프레임 추출(crv)과 Tesseract OCR도 ffmpeg 압축과 마찬가지로 CPU를 많이
+ * 쓴다. 두 단계를 한 세마포어 슬롯 안에 묶어서, 한 영상이 이 구간을 도는
+ * 동안에는 다른 영상이 같은 CPU를 두고 끼어들지 못하게 한다(따로 슬롯을
+ * 나누면 A영상 키프레임 + B영상 OCR처럼 여러 개가 동시에 겹쳐 돌면서 원래
+ * 의도한 "동시 1~2개" 제한이 무력화된다). */
+const withCpuSlot = createSemaphore(Number(process.env.MAX_CONCURRENT_CPU_JOBS) || 2);
+
+/* OpenAI(gpt-4o-mini) 호출도 영상이 한꺼번에 몰리면 분당 토큰 한도를 순식간에
+ * 넘긴다. 동시 실행 개수를 제한해두면, 한도 안에서 최대한 빠르게 흘려보내면서도
+ * 순간적으로 요청이 몰려 대부분 429로 튕기는 상황을 막을 수 있다. */
+const withOpenAISlot = createSemaphore(Number(process.env.MAX_CONCURRENT_OPENAI_CALLS) || 4);
 
 /* 자막 검수는 저해상도면 충분한데 원본(1080p 이상)을 그대로 crv/Tesseract에 넣으면
  * 해상도에 비례해서 CPU 부하가 커진다. 업로드 즉시 저해상도·고속 프리셋으로
@@ -1065,23 +1084,31 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
 
   try {
     let frames = [];
+    let ocrResults = [];
     try {
-      const kf = await keyframes(videoPath, { maxFrames: 60 });
-      frames = kf.frames;
+      // 키프레임 추출과 OCR을 한 CPU 슬롯 안에서 순서대로 처리한다(위
+      // withCpuSlot 설명 참고) — 30개가 몰려도 실제로 CPU를 쓰는 시점은
+      // 항상 1~2개 영상으로 제한된다.
+      await withCpuSlot(async () => {
+        const kf = await keyframes(videoPath, { maxFrames: 60 });
+        frames = kf.frames;
+        timings.keyframesMs = Date.now() - t0;
+        timings.frameCount = frames.length;
+        if (!frames.length) return;
+
+        const t1 = Date.now();
+        ocrResults = await ocrFramesTesseract(frames);
+        timings.tesseractMs = Date.now() - t1;
+      });
     } catch (e) {
-      await finalizeAsAudioOnly(`키프레임 추출 실패: ${e.message}`);
+      await finalizeAsAudioOnly(`화면 자막 분석 실패: ${e.message}`);
       return;
     }
-    timings.keyframesMs = Date.now() - t0;
-    timings.frameCount = frames.length;
     if (!frames.length) {
       await finalizeAsAudioOnly("추출된 프레임 없음");
       return;
     }
 
-    const t1 = Date.now();
-    const ocrResults = await ocrFramesTesseract(frames);
-    timings.tesseractMs = Date.now() - t1;
     const zipped = frames.map((f, i) => ({ ...f, ...ocrResults[i] }));
 
     // 프레임을 정밀검증(Vision) 대상으로 고를 땐 경쟁 브랜드명 목록만 본다 —
