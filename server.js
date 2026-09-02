@@ -167,6 +167,12 @@ async function configureR2Cors() {
 const ORPHAN_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2시간
 const ORPHAN_CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // 30분마다 확인
 
+/* Supabase 무료 플랜은 7일간 API 요청이 없으면 프로젝트를 자동으로
+ * 일시정지시킨다. 실제 검수 없이도 하루 한 번 가벼운 조회만 보내
+ * "비활성"으로 분류되지 않게 한다 — 새 테이블 없이 기존 테이블을
+ * 1행만 읽는 정도라 비용·부하가 사실상 없다. */
+const SUPABASE_HEARTBEAT_INTERVAL_MS = 24 * 60 * 60 * 1000; // 하루 한 번
+
 async function cleanupOrphanedUploads() {
   if (!r2) return;
   try {
@@ -198,6 +204,12 @@ async function cleanupOrphanedUploads() {
   } catch (e) {
     console.warn(`[R2] 고아 파일 정리 실패: ${e.message}`);
   }
+}
+
+async function pingSupabaseHeartbeat() {
+  if (!supabase) return;
+  const { error } = await supabase.from("reelcheck_influencers").select("id").limit(1);
+  if (error) console.warn(`[Supabase] 하트비트 실패: ${error.message}`);
 }
 
 app.use(cors({ origin: ALLOW_ORIGIN }));
@@ -1385,4 +1397,6 @@ app.listen(PORT, async () => {
   await configureR2Cors();
   cleanupOrphanedUploads();
   setInterval(cleanupOrphanedUploads, ORPHAN_CLEANUP_INTERVAL_MS);
+  pingSupabaseHeartbeat();
+  setInterval(pingSupabaseHeartbeat, SUPABASE_HEARTBEAT_INTERVAL_MS);
 });
