@@ -1,11 +1,58 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
-export default function CampaignSettings({ campaign, setCampaign, onSave, showToast }) {
+export default function CampaignSettings({ campaign, setCampaign, onSave, showToast, campaignId, apiFetch }) {
     const [saving, setSaving] = useState(false);
     const [competitorOpen, setCompetitorOpen] = useState(false);
     const competitorInputRefs = useRef([]);
     const hasCompetitorEntries = campaign.competitorBrands.some(Boolean);
     const showCompetitor = competitorOpen || hasCompetitorEntries;
+
+    // 이 캠페인에 업로드를 허용할 에이전시 이메일 목록. 등록과 동시에 즉시
+    // 허용되고(초대 메일 없음), 마케터만 추가/삭제할 수 있다.
+    const [agencyEmails, setAgencyEmails] = useState([]);
+    const [newAgencyEmail, setNewAgencyEmail] = useState('');
+    const [agencySaving, setAgencySaving] = useState(false);
+
+    useEffect(() => {
+        if (!campaignId) return;
+        let cancelled = false;
+        apiFetch(`/api/campaigns/${campaignId}/agencies`)
+            .then((r) => (r.ok ? r.json() : []))
+            .then((rows) => { if (!cancelled) setAgencyEmails(Array.isArray(rows) ? rows : []); })
+            .catch(() => { if (!cancelled) setAgencyEmails([]); });
+        return () => { cancelled = true; };
+    }, [campaignId, apiFetch]);
+
+    const addAgencyEmail = async () => {
+        const email = newAgencyEmail.trim().toLowerCase();
+        if (!email) return;
+        setAgencySaving(true);
+        try {
+            const res = await apiFetch(`/api/campaigns/${campaignId}/agencies`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '등록에 실패했습니다.');
+            setAgencyEmails((prev) => [...prev.filter((a) => a.email !== email), data]);
+            setNewAgencyEmail('');
+        } catch (err) {
+            showToast('error', '에이전시 등록 실패', err.message);
+        } finally {
+            setAgencySaving(false);
+        }
+    };
+
+    const removeAgencyEmail = async (email) => {
+        try {
+            const res = await apiFetch(`/api/campaigns/${campaignId}/agencies/${encodeURIComponent(email)}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('삭제에 실패했습니다.');
+            setAgencyEmails((prev) => prev.filter((a) => a.email !== email));
+        } catch (err) {
+            showToast('error', '삭제 실패', err.message);
+        }
+    };
 
     // 콤마를 입력(또는 여러 개를 콤마로 붙여넣기)하면 그 앞부분을 확정된
     // 항목으로 쪼개고, 마지막 조각은 계속 입력 중인 값으로 남겨 새 입력란이
@@ -45,6 +92,7 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
     };
 
     return (
+        <>
         <div className="card">
             <div className="card-hd"><h2>가이드라인 규칙 입력 폼</h2></div>
             <div className="grid2">
@@ -164,5 +212,52 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
             </div>
             <button className="btn stamp" style={{ marginTop: '15px' }} disabled={saving} onClick={handleSave}>{saving ? '저장 중...' : '가이드라인 저장'}</button>
         </div>
+
+        {campaignId && (
+            <div className="card">
+                <div className="card-hd"><h2>에이전시 접근 허용</h2></div>
+                <div style={{ fontSize: '11px', color: 'var(--mute)', marginBottom: '12px' }}>
+                    *등록된 구글 계정으로 로그인한 MCN/에이전시만 이 캠페인에 영상을 업로드할 수 있습니다. 등록과 동시에 즉시 허용되며, 별도의 초대 메일은 발송되지 않습니다.
+                </div>
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
+                    <input
+                        className="in"
+                        placeholder="agency@example.com"
+                        value={newAgencyEmail}
+                        onChange={(e) => setNewAgencyEmail(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') addAgencyEmail(); }}
+                    />
+                    <button
+                        type="button"
+                        className="btn stamp"
+                        disabled={agencySaving || !newAgencyEmail.trim()}
+                        onClick={addAgencyEmail}
+                        style={{ flex: 'none' }}
+                    >
+                        등록
+                    </button>
+                </div>
+                {agencyEmails.length === 0 ? (
+                    <p style={{ fontSize: '12px', color: 'var(--mute)', margin: 0 }}>등록된 에이전시 계정이 없습니다.</p>
+                ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {agencyEmails.map((a) => (
+                            <span key={a.email} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                background: '#FFF', border: '1px solid var(--line)', color: 'var(--graphite)',
+                                borderRadius: '999px', padding: '5px 6px 5px 12px', fontSize: '12px', fontWeight: 600,
+                            }}>
+                                {a.email}
+                                <button type="button" onClick={() => removeAgencyEmail(a.email)}
+                                    style={{ background: 'transparent', border: 'none', color: 'var(--mute)', cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: '2px 4px' }}>
+                                    ×
+                                </button>
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </div>
+        )}
+        </>
     );
 }

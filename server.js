@@ -12,8 +12,23 @@
 import express from "express";
 import multer from "multer";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import {
+  generateOAuthState,
+  buildGoogleAuthUrl,
+  exchangeCodeForEmail,
+  signSessionToken,
+  resolveAccess,
+  requireAuth,
+  requireMarketer,
+  requireCampaignAccess,
+  verifyOrigin,
+  devOnly,
+  SESSION_MAX_AGE_MS,
+  OAUTH_STATE_MAX_AGE_MS,
+} from "./auth.js";
 import {
   S3Client,
   PutObjectCommand,
@@ -212,8 +227,23 @@ async function pingSupabaseHeartbeat() {
   if (error) console.warn(`[Supabase] 하트비트 실패: ${error.message}`);
 }
 
-app.use(cors({ origin: ALLOW_ORIGIN }));
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+// 세션 쿠키를 설정할 때/지울 때 공통으로 쓰는 속성. 프론트(Vercel)와
+// 백엔드(Render)가 서로 다른 도메인이라 sameSite=none이 필요한데, 이건
+// HTTPS(secure)에서만 브라우저가 허용한다 — 로컬(HTTP)은 lax로 낮춘다.
+const sessionCookieOptions = () => ({
+  httpOnly: true,
+  secure: IS_PRODUCTION,
+  sameSite: IS_PRODUCTION ? "none" : "lax",
+});
+
+// credentials:true와 origin:"*"는 브라우저가 함께 허용하지 않으므로,
+// 쿠키 기반 로그인을 쓰는 이상 ALLOW_ORIGIN은 반드시 실제 프론트 주소로
+// 좁혀야 한다(배포 시 README·환경변수 설정 참고).
+app.use(cors({ origin: ALLOW_ORIGIN, credentials: true }));
 app.use(express.json());
+app.use(cookieParser());
+app.use(verifyOrigin(ALLOW_ORIGIN));
 const upload = multer({
   dest: path.join(os.tmpdir(), "reelcheck-up"),
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
@@ -898,15 +928,124 @@ app.get("/api/health", async (_req, res) => {
   });
 });
 
+/* ───────────── 로그인 / 권한 ─────────────
+ * 프론트에 구글 스크립트를 전혀 불러오지 않는다("외부 CDN 스크립트 일절
+ * 없음" 정책 준수) — 로그인 버튼은 그냥 아래 /start 주소로 이동만 하고,
+ * 구글과의 실제 교환은 서버 대 서버로만 이뤄진다. */
+
+/* state를 짧게 사는 쿠키에도 심어둔다 — 콜백에서 쿼리의 state와 대조해
+ * 이 로그인 시도가 정말 우리 /start에서 시작된 게 맞는지 확인한다. */
+app.get("/api/auth/google/start", (_req, res) => {
+  const state = generateOAuthState();
+  res.cookie("oauth_state", state, { ...sessionCookieOptions(), maxAge: OAUTH_STATE_MAX_AGE_MS });
+  try {
+    res.redirect(buildGoogleAuthUrl(state));
+  } catch (e) {
+    res.status(503).send(e.message);
+  }
+});
+
+app.get("/api/auth/google/callback", requireSupabase, async (req, res) => {
+  const { code, state } = req.query;
+  const savedState = req.cookies?.oauth_state;
+  res.clearCookie("oauth_state", sessionCookieOptions());
+
+  if (!code || !state || state !== savedState) {
+    return res.redirect(`${ALLOW_ORIGIN}/?authError=invalid_request`);
+  }
+  let email;
+  try {
+    email = await exchangeCodeForEmail(code);
+  } catch (e) {
+    console.error("[구글 로그인] code 교환 실패:", e.message);
+    return res.redirect(`${ALLOW_ORIGIN}/?authError=google_failed`);
+  }
+  const access = await resolveAccess(email, supabase);
+  if (!access) {
+    return res.redirect(`${ALLOW_ORIGIN}/?authError=not_whitelisted`);
+  }
+  const token = signSessionToken(email);
+  res.cookie("session", token, { ...sessionCookieOptions(), maxAge: SESSION_MAX_AGE_MS });
+  res.redirect(ALLOW_ORIGIN);
+});
+
+app.post("/api/auth/logout", (_req, res) => {
+  res.clearCookie("session", sessionCookieOptions());
+  res.json({ ok: true });
+});
+
+app.get("/api/auth/me", requireAuth, requireSupabase, async (req, res) => {
+  const access = await resolveAccess(req.user.email, supabase);
+  if (!access) return res.status(403).json({ error: "등록되지 않은 계정입니다." });
+  res.json({ email: req.user.email, ...access });
+});
+
+/* requireCampaignAccess에 넘기는 campaign_id 조회 함수들. 클라이언트가 보낸
+ * campaignId를 그대로 믿지 않고, influencerId가 있는 요청은 항상 DB에서
+ * 그 인플루언서가 실제로 속한 캠페인을 역조회한다(위조 방지). */
+const campaignIdFromParams = async (req) => req.params.id;
+const campaignIdFromInfluencerIdParam = async (req, sb) => {
+  const { data } = await sb.from("reelcheck_influencers").select("campaign_id").eq("id", req.params.id).maybeSingle();
+  return data?.campaign_id || null;
+};
+const campaignIdFromInfluencerIdBody = async (req, sb) => {
+  const { data } = await sb
+    .from("reelcheck_influencers")
+    .select("campaign_id")
+    .eq("id", req.body?.influencerId)
+    .maybeSingle();
+  return data?.campaign_id || null;
+};
+
 /* ───────────── 캠페인 / 인플루언서 (Supabase) ───────────── */
 
-app.get("/api/campaigns", requireSupabase, async (_req, res) => {
-  const { data, error } = await supabase
-    .from("reelcheck_campaigns")
-    .select("*")
-    .order("created_at", { ascending: false });
+app.get("/api/campaigns", requireSupabase, requireAuth, async (req, res) => {
+  const access = await resolveAccess(req.user.email, supabase);
+  if (!access) return res.status(403).json({ error: "접근 권한이 없습니다." });
+
+  let query = supabase.from("reelcheck_campaigns").select("*").order("created_at", { ascending: false });
+  if (access.role === "agency") {
+    // 화이트리스트된 캠페인이 하나도 없을 수 있다 — 그 경우 in()에 빈
+    // 배열을 넘기는 대신 절대 존재할 수 없는 id로 대체해 "0건"을 확실히 한다.
+    const ids = access.campaignIds.length ? access.campaignIds : ["00000000-0000-0000-0000-000000000000"];
+    query = query.in("id", ids);
+  }
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+app.get("/api/campaigns/:id/agencies", requireSupabase, requireAuth, requireMarketer(supabase), async (req, res) => {
+  const { data, error } = await supabase
+    .from("reelcheck_campaign_agencies")
+    .select("email, created_at")
+    .eq("campaign_id", req.params.id)
+    .order("created_at", { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.post("/api/campaigns/:id/agencies", requireSupabase, requireAuth, requireMarketer(supabase), async (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!email) return res.status(400).json({ error: "이메일을 입력해주세요." });
+  const { data, error } = await supabase
+    .from("reelcheck_campaign_agencies")
+    .upsert({ campaign_id: req.params.id, email })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+app.delete("/api/campaigns/:id/agencies/:email", requireSupabase, requireAuth, requireMarketer(supabase), async (req, res) => {
+  const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+  const { error } = await supabase
+    .from("reelcheck_campaign_agencies")
+    .delete()
+    .eq("campaign_id", req.params.id)
+    .eq("email", email);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 const monthDate = (year, month) => {
@@ -916,7 +1055,7 @@ const monthDate = (year, month) => {
   return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-01`;
 };
 
-app.post("/api/campaigns", requireSupabase, async (req, res) => {
+app.post("/api/campaigns", requireSupabase, requireAuth, requireMarketer(supabase), async (req, res) => {
   const { advertiser, name, startDate, endDate, startYear, startMonth, endMonth, manager, brand, product, usps, bans, competitorBrands } = req.body || {};
   if (!advertiser || !name) {
     return res.status(400).json({ error: "광고주명과 프로젝트명은 필수입니다." });
@@ -941,7 +1080,7 @@ app.post("/api/campaigns", requireSupabase, async (req, res) => {
   res.json(data);
 });
 
-app.put("/api/campaigns/:id", requireSupabase, async (req, res) => {
+app.put("/api/campaigns/:id", requireSupabase, requireAuth, requireMarketer(supabase), async (req, res) => {
   const { advertiser, name, startDate, endDate, manager, brand, product, usps, bans, competitorBrands } = req.body || {};
   const patch = {};
   if (advertiser !== undefined) patch.advertiser = advertiser;
@@ -965,18 +1104,29 @@ app.put("/api/campaigns/:id", requireSupabase, async (req, res) => {
   res.json(data);
 });
 
-app.get("/api/campaigns/:id/influencers", requireSupabase, async (req, res) => {
-  const { data, error } = await supabase
-    .from("reelcheck_influencers")
-    .select("*")
-    .eq("campaign_id", req.params.id)
-    .order("created_at", { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
+app.get(
+  "/api/campaigns/:id/influencers",
+  requireSupabase,
+  requireAuth,
+  requireCampaignAccess(supabase, campaignIdFromParams),
+  async (req, res) => {
+    const { data, error } = await supabase
+      .from("reelcheck_influencers")
+      .select("*")
+      .eq("campaign_id", req.params.id)
+      .order("created_at", { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  },
+);
 
 /* 엑셀 대량 업로드 → 해당 캠페인의 기존 명단을 통째로 교체 */
-app.post("/api/campaigns/:id/influencers/bulk", requireSupabase, async (req, res) => {
+app.post(
+  "/api/campaigns/:id/influencers/bulk",
+  requireSupabase,
+  requireAuth,
+  requireMarketer(supabase),
+  async (req, res) => {
   const campaignId = req.params.id;
   const list = Array.isArray(req.body?.influencers) ? req.body.influencers : [];
 
@@ -994,49 +1144,67 @@ app.post("/api/campaigns/:id/influencers/bulk", requireSupabase, async (req, res
     result: "-",
   }));
   const { data, error } = await supabase.from("reelcheck_influencers").insert(rows).select();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  },
+);
 
-app.get("/api/influencers/:id", requireSupabase, async (req, res) => {
-  const { data, error } = await supabase
-    .from("reelcheck_influencers")
-    .select("*")
-    .eq("id", req.params.id)
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
+app.get(
+  "/api/influencers/:id",
+  requireSupabase,
+  requireAuth,
+  requireCampaignAccess(supabase, campaignIdFromInfluencerIdParam),
+  async (req, res) => {
+    const { data, error } = await supabase
+      .from("reelcheck_influencers")
+      .select("*")
+      .eq("id", req.params.id)
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+  },
+);
 
 /* 마케터가 원본 영상을 재생해볼 수 있도록, R2에 남겨둔 영상의 임시 재생
  * URL을 발급한다. 마케터가 최종 "통과" 판정을 내리면 영상 자체가
  * 삭제되므로(아래 PATCH 참고) 그 전까지만 유효하다. */
-app.get("/api/influencers/:id/video-url", requireSupabase, requireR2, async (req, res) => {
-  const { data, error } = await supabase
-    .from("reelcheck_influencers")
-    .select("video_path")
-    .eq("id", req.params.id)
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data?.video_path) return res.status(404).json({ error: "보관된 영상이 없습니다." });
-  try {
-    const url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: data.video_path }), {
-      expiresIn: 3600,
-    });
-    res.json({ url });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+app.get(
+  "/api/influencers/:id/video-url",
+  requireSupabase,
+  requireR2,
+  requireAuth,
+  requireCampaignAccess(supabase, campaignIdFromInfluencerIdParam),
+  async (req, res) => {
+    const { data, error } = await supabase
+      .from("reelcheck_influencers")
+      .select("video_path")
+      .eq("id", req.params.id)
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data?.video_path) return res.status(404).json({ error: "보관된 영상이 없습니다." });
+    try {
+      const url = await getSignedUrl(r2, new GetObjectCommand({ Bucket: R2_BUCKET, Key: data.video_path }), {
+        expiresIn: 3600,
+      });
+      res.json({ url });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
 
-app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
-  const { status, result, feedback, videoName, transcript, review, marketerResult } = req.body || {};
+/* 실제로는 saveMarketerFeedback(frontend/src/index.js) 한 곳에서만
+ * feedback/marketerResult 필드로 호출된다 — 사실상 마케터가 최종 판정을
+ * 남기는 전용 라우트라, 이름을 명시하고 처리 필드도 그 용도로 좁힌다. */
+app.patch(
+  "/api/influencers/:id/marketer-result",
+  requireSupabase,
+  requireAuth,
+  requireMarketer(supabase),
+  async (req, res) => {
+  const { feedback, review, marketerResult } = req.body || {};
   const patch = {};
-  if (status !== undefined) patch.status = status;
-  if (result !== undefined) patch.result = result;
   if (feedback !== undefined) patch.feedback = feedback;
-  if (videoName !== undefined) patch.video_name = videoName;
-  if (transcript !== undefined) patch.transcript = transcript;
   if (review !== undefined) patch.review = review;
   if (marketerResult !== undefined) patch.marketer_result = marketerResult;
 
@@ -1060,8 +1228,9 @@ app.patch("/api/influencers/:id", requireSupabase, async (req, res) => {
     data.video_path = null;
   }
 
-  res.json(data);
-});
+    res.json(data);
+  },
+);
 
 /*
  * 화면 자막 검수는 crv 스캔 + Tesseract + (의심 프레임만) GPT-4o 검증까지 거치면
@@ -1274,7 +1443,14 @@ async function processUploadedVideo({ videoPath, influencerId, campaign }) {
   return { ...result, ocrPending: canContinue, review };
 }
 
-app.post("/api/transcribe", upload.single("video"), async (req, res) => {
+/* 화면(마케터/에이전시 UI)에서는 쓰지 않는, curl로 빠르게 확인하는 개발용
+ * 경로다 — 배포 환경에서만 로그인·권한을 강제한다(devOnly, auth.js 참고). */
+app.post(
+  "/api/transcribe",
+  upload.single("video"),
+  devOnly(requireAuth),
+  devOnly(requireCampaignAccess(supabase, campaignIdFromInfluencerIdBody)),
+  async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "video 필드에 파일을 담아 보내주세요." });
   const videoPath = req.file.path;
   const influencerId = req.body?.influencerId || null;
@@ -1290,12 +1466,19 @@ app.post("/api/transcribe", upload.single("video"), async (req, res) => {
     fail(res, e);
     fs.rm(videoPath, { force: true }).catch(() => {});
   }
-});
+  },
+);
 
 /* 대용량 영상용 경로: 브라우저가 이미 스토리지에 직접 업로드를 끝낸 뒤,
  * 어디에 올렸는지(storagePath)만 알려주면 서버가 받아와서 검수를 시작한다. */
-app.post("/api/uploads/presign", requireR2, async (req, res) => {
-  const influencerId = req.body?.influencerId || "misc";
+app.post(
+  "/api/uploads/presign",
+  requireR2,
+  requireAuth,
+  requireCampaignAccess(supabase, campaignIdFromInfluencerIdBody),
+  async (req, res) => {
+  const influencerId = req.body?.influencerId;
+  if (!influencerId) return res.status(400).json({ error: "influencerId가 필요합니다." });
   const filename = String(req.body?.filename || "video").replace(/[^\w.-]+/g, "_");
   const objectKey = `${UPLOADS_PREFIX}${Date.now()}-${influencerId}-${filename}`;
   try {
@@ -1305,7 +1488,8 @@ app.post("/api/uploads/presign", requireR2, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
-});
+  },
+);
 
 /* 스토리지에서 파일을 내려받아 검수를 시작하는 것 자체가 대용량 영상 기준으로
  * 꽤 걸릴 수 있다(다운로드 + 전사 + 압축). 이 요청을 동기로 끝까지 붙잡고
@@ -1313,7 +1497,12 @@ app.post("/api/uploads/presign", requireR2, async (req, res) => {
  * 쪽에서 Render의 요청 처리 한도에 다시 걸릴 수 있다. 그래서 요청을 받으면
  * 바로 응답부터 하고, 실제 다운로드·검수는 백그라운드로 넘긴다 — 프론트는
  * 자막 검수와 동일하게 폴링으로 결과를 받는다. */
-app.post("/api/transcribe/from-storage", requireR2, async (req, res) => {
+app.post(
+  "/api/transcribe/from-storage",
+  requireR2,
+  requireAuth,
+  requireCampaignAccess(supabase, campaignIdFromInfluencerIdBody),
+  async (req, res) => {
   const { storagePath, influencerId, campaign } = req.body || {};
   if (!storagePath) return res.status(400).json({ error: "storagePath가 필요합니다." });
 
@@ -1354,9 +1543,12 @@ app.post("/api/transcribe/from-storage", requireR2, async (req, res) => {
         .then(() => {}, () => {});
     }
   }
-});
+  },
+);
 
-app.post("/api/frames", upload.single("video"), async (req, res) => {
+/* 아래 두 라우트는 화면(마케터/에이전시 UI)에서 쓰지 않는 개발용 디버그
+ * 엔드포인트다 — 배포 환경에서만 로그인·마케터 권한을 강제한다. */
+app.post("/api/frames", upload.single("video"), devOnly(requireAuth), devOnly(requireMarketer(supabase)), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "video 필드에 파일을 담아 보내주세요." });
   try {
     res.json(await keyframes(req.file.path, req.body || {}));
@@ -1364,8 +1556,7 @@ app.post("/api/frames", upload.single("video"), async (req, res) => {
   finally { fs.rm(req.file.path, { force: true }).catch(() => {}); }
 });
 
-/* 프론트엔드가 호출하는 통합 엔드포인트 */
-app.post("/api/inspect", upload.single("video"), async (req, res) => {
+app.post("/api/inspect", upload.single("video"), devOnly(requireAuth), devOnly(requireMarketer(supabase)), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "video 필드에 파일을 담아 보내주세요." });
   try {
     const [vis, aud] = await Promise.allSettled([
@@ -1389,14 +1580,20 @@ app.post("/api/inspect", upload.single("video"), async (req, res) => {
   finally { fs.rm(req.file.path, { force: true }).catch(() => {}); }
 });
 
-app.listen(PORT, async () => {
-  console.log(`InCensor 검수 서버 실행 중 → http://localhost:${PORT}`);
-  console.log(`설치 상태 확인 → http://localhost:${PORT}/api/health`);
+// 테스트(node --test)에서는 서버를 실제로 띄우지 않고 app만 import해서
+// supertest로 호출한다.
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, async () => {
+    console.log(`InCensor 검수 서버 실행 중 → http://localhost:${PORT}`);
+    console.log(`설치 상태 확인 → http://localhost:${PORT}/api/health`);
 
-  await verifyR2Connection();
-  await configureR2Cors();
-  cleanupOrphanedUploads();
-  setInterval(cleanupOrphanedUploads, ORPHAN_CLEANUP_INTERVAL_MS);
-  pingSupabaseHeartbeat();
-  setInterval(pingSupabaseHeartbeat, SUPABASE_HEARTBEAT_INTERVAL_MS);
-});
+    await verifyR2Connection();
+    await configureR2Cors();
+    cleanupOrphanedUploads();
+    setInterval(cleanupOrphanedUploads, ORPHAN_CLEANUP_INTERVAL_MS);
+    pingSupabaseHeartbeat();
+    setInterval(pingSupabaseHeartbeat, SUPABASE_HEARTBEAT_INTERVAL_MS);
+  });
+}
+
+export default app;

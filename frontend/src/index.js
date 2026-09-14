@@ -5,9 +5,17 @@ import CampaignSettings from "./CampaignSettings";
 import CampaignCreate, { formatCampaignPeriod } from "./CampaignCreate";
 import LandingPage from "./LandingPage";
 import Logo from "./Logo";
+import Login from "./Login";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8787";
 const STORAGE_KEY = "reelcheck_campaigns_v1";
+
+/* 로그인 세션은 httpOnly 쿠키로 관리된다. 백엔드(Render)와 프론트(Vercel)가
+ * 서로 다른 도메인이라 credentials를 명시하지 않으면 쿠키가 전달되지 않아
+ * 로그인해도 모든 API가 401로 막힌다 — 그래서 모든 호출을 이 헬퍼로 통일한다. */
+function apiFetch(path, options) {
+  return fetch(`${API_BASE}${path}`, { ...options, credentials: "include" });
+}
 
 /* Render 서버를 거치지 않고 스토리지(서명된 URL)로 직접 업로드한다 — 대용량
  * 영상이 Render의 요청 처리 시간 한도(~300초)에 걸려 실패하는 문제를 피하기
@@ -144,10 +152,50 @@ function mapApiCampaign(row, localInfluencers = []) {
 function App() {
   const local = loadLocal();
   // 접속하면 먼저 랜딩 페이지(소개 화면)를 보여주고, "Get Started"를 누르면
-  // "제일기획/MCN·에이전시" 중 하나를 고르는 화면으로 이어진다. 로그인 기능은
-  // 아직 붙이지 않아 버튼도 없다. 로고를 누르면 언제든 랜딩 페이지로 돌아온다.
+  // 로그인 화면으로 이어진다. 로그인에 성공하면 서버가 알려준 역할(마케터/
+  // 에이전시)로 곧장 앱 화면으로 넘어간다 — "어떤 화면으로 접속할지"를
+  // 사람이 직접 고르던 버튼은 이제 서버가 대신 정해주므로 없앴다.
+  // 로고를 누르면 언제든 랜딩 페이지로 돌아온다.
   const [screen, setScreen] = useState("landing");
   const [role, setRole] = useState("marketer");
+  // "checking"(세션 확인 중) → "anon"(로그인 필요) | "authed"(로그인됨)
+  const [authStatus, setAuthStatus] = useState("checking");
+  const [authError, setAuthError] = useState(null);
+
+  // 새로고침해도 로그인 상태가 유지되도록, 처음 뜰 때 세션 쿠키가 아직
+  // 유효한지 서버에 물어본다. 구글 로그인 콜백이 실패했을 때는
+  // "?authError=..." 쿼리로 이 페이지에 돌아오므로, 그 값도 같이 확인해서
+  // 로그인 화면에 이유를 보여준다.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const err = params.get("authError");
+    if (err) {
+      setAuthError(err);
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+
+    let cancelled = false;
+    apiFetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data) => {
+        if (cancelled) return;
+        setRole(data.role === "agency" ? "influencer" : "marketer");
+        setAuthStatus("authed");
+        setScreen("app");
+      })
+      .catch(() => {
+        if (!cancelled) setAuthStatus("anon");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    await apiFetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    setAuthStatus("anon");
+    setScreen("landing");
+  };
   const [tab, setTab] = useState("campaign");
   const [guideOpen, setGuideOpen] = useState(false);
   const [campaigns, setCampaigns] = useState(local.campaigns);
@@ -178,7 +226,7 @@ function App() {
     setVideoUnavailable(false);
     if (!selectedInf?.id) return;
     let cancelled = false;
-    fetch(`${API_BASE}/api/influencers/${selectedInf.id}/video-url`)
+    apiFetch(`/api/influencers/${selectedInf.id}/video-url`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => {
         if (!cancelled) setVideoUrl(d.url);
@@ -243,7 +291,7 @@ function App() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/campaigns`);
+        const res = await apiFetch(`/api/campaigns`);
         if (!res.ok) return;
         const rows = await res.json();
         if (!Array.isArray(rows) || cancelled) return;
@@ -253,8 +301,8 @@ function App() {
         const influencerLists = await Promise.all(
           rows.map(async (row) => {
             try {
-              const r = await fetch(
-                `${API_BASE}/api/campaigns/${row.id}/influencers`,
+              const r = await apiFetch(
+                `/api/campaigns/${row.id}/influencers`,
               );
               if (!r.ok) return [];
               const infRows = await r.json();
@@ -324,7 +372,7 @@ function App() {
   // 📋 가이드라인 저장 — 백엔드 캠페인 행에 실제로 반영해야 새로고침/다른 기기에서도 유지된다.
   const saveGuidelines = async () => {
     if (!selectedCampaignId) throw new Error("캠페인을 먼저 선택해주세요.");
-    const res = await fetch(`${API_BASE}/api/campaigns/${selectedCampaignId}`, {
+    const res = await apiFetch(`/api/campaigns/${selectedCampaignId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -370,7 +418,7 @@ function App() {
   };
 
   const handleCreateCampaign = async (payload) => {
-    const res = await fetch(`${API_BASE}/api/campaigns`, {
+    const res = await apiFetch(`/api/campaigns`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -464,8 +512,8 @@ function App() {
       }));
 
       try {
-        const res = await fetch(
-          `${API_BASE}/api/campaigns/${selectedCampaignId}/influencers/bulk`,
+        const res = await apiFetch(
+          `/api/campaigns/${selectedCampaignId}/influencers/bulk`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -519,7 +567,7 @@ function App() {
     }
     setTimeout(async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/influencers/${id}`);
+        const res = await apiFetch(`/api/influencers/${id}`);
         if (res.ok) {
           const row = await res.json();
           if (row.status === "검수완료") {
@@ -583,10 +631,10 @@ function App() {
 
     try {
       // 1) 업로드용 서명 URL 발급 (Render 서버가 아니라 스토리지로 바로 올릴 주소)
-      const presignRes = await fetch(`${API_BASE}/api/uploads/presign`, {
+      const presignRes = await apiFetch(`/api/uploads/presign`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ influencerId: id, filename: file.name }),
+        body: JSON.stringify({ influencerId: id, filename: file.name, campaignId: selectedCampaignId }),
       });
       const presignData = await presignRes.json();
       if (!presignRes.ok) throw new Error(presignData.error || "업로드 준비에 실패했습니다.");
@@ -606,7 +654,7 @@ function App() {
       );
 
       // 3) 업로드 완료를 서버에 알려 검수 시작
-      const res = await fetch(`${API_BASE}/api/transcribe/from-storage`, {
+      const res = await apiFetch(`/api/transcribe/from-storage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -645,7 +693,7 @@ function App() {
   // 새로고침하거나 다른 기기에서 봐도 유지된다.
   const saveMarketerFeedback = async (id, patch) => {
     try {
-      const res = await fetch(`${API_BASE}/api/influencers/${id}`, {
+      const res = await apiFetch(`/api/influencers/${id}/marketer-result`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
@@ -671,48 +719,29 @@ function App() {
     }
   };
 
-  if (screen === "landing") {
-    return <LandingPage onGetStarted={() => setScreen("home")} />;
-  }
-
-  if (screen === "home") {
+  // 세션 확인 중에는 아무 화면도 보여주지 않는다 — 로그인된 사용자가
+  // 랜딩/로그인 화면을 잠깐 봤다가 앱으로 튕기는 깜빡임을 막기 위함.
+  if (authStatus === "checking") {
     return (
       <div className="home">
-        <div className="bar">
-          <Logo onClick={() => setScreen("landing")} />
-          <span className="spacer" />
-          <span className="bar-sub">인플루언서 콘텐츠 1차 검수 솔루션</span>
-        </div>
         <div className="home-body">
-          <div className="eyebrow">Get started</div>
-          <h1>어떤 화면으로 접속하시겠어요?</h1>
-          <div className="role-row">
-            <button
-              className="role-btn"
-              onClick={() => {
-                setRole("marketer");
-                setScreen("app");
-              }}
-            >
-              <span className="num">1</span>
-              <div className="role-title">제일기획</div>
-              <div className="arrow">마케터 화면으로 →</div>
-            </button>
-            <button
-              className="role-btn"
-              onClick={() => {
-                setRole("influencer");
-                setScreen("app");
-              }}
-            >
-              <span className="num">2</span>
-              <div className="role-title">MCN / 에이전시</div>
-              <div className="arrow">업로드 화면으로 →</div>
-            </button>
-          </div>
+          <div className="eyebrow">InCensor</div>
+          <h1>불러오는 중...</h1>
         </div>
       </div>
     );
+  }
+
+  if (screen === "landing") {
+    return (
+      <LandingPage
+        onGetStarted={() => setScreen(authStatus === "authed" ? "app" : "login")}
+      />
+    );
+  }
+
+  if (authStatus === "anon") {
+    return <Login apiBase={API_BASE} error={authError} />;
   }
 
   return (
@@ -722,19 +751,13 @@ function App() {
         <Logo onClick={() => setScreen("landing")} />
         <span className="spacer" />
         <div className="roles">
-          <button
-            className={role === "marketer" ? "active" : ""}
-            onClick={() => setRole("marketer")}
-          >
-            제일기획
-          </button>
-          <button
-            className={role === "influencer" ? "active" : ""}
-            onClick={() => setRole("influencer")}
-          >
-            MCN/에이전시
-          </button>
+          <span className="active" style={{ padding: "7px 15px", fontSize: 12, fontWeight: 600 }}>
+            {role === "marketer" ? "제일기획" : "MCN/에이전시"}
+          </span>
         </div>
+        <button className="btn sm outline" style={{ marginLeft: 10 }} onClick={handleLogout}>
+          로그아웃
+        </button>
       </div>
 
       <div className="wrap">
@@ -814,6 +837,8 @@ function App() {
                     setCampaign={setCampaign}
                     onSave={saveGuidelines}
                     showToast={showToast}
+                    campaignId={selectedCampaignId}
+                    apiFetch={apiFetch}
                   />
                 </div>
               )}
