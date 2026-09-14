@@ -79,17 +79,19 @@ export async function resolveAccess(email, supabase) {
   const normalized = String(email || "").toLowerCase();
   if (!normalized || !supabase) return null;
 
-  const { data: marketer } = await supabase
+  const { data: marketer, error: marketerError } = await supabase
     .from("reelcheck_marketers")
     .select("email")
     .eq("email", normalized)
     .maybeSingle();
+  if (marketerError) console.error("[resolveAccess] 마케터 조회 실패:", marketerError.message, marketerError.code || "");
   if (marketer) return { role: "marketer" };
 
-  const { data: agencies } = await supabase
+  const { data: agencies, error: agencyError } = await supabase
     .from("reelcheck_campaign_agencies")
     .select("campaign_id")
     .eq("email", normalized);
+  if (agencyError) console.error("[resolveAccess] 에이전시 조회 실패:", agencyError.message, agencyError.code || "");
   if (agencies?.length) return { role: "agency", campaignIds: agencies.map((a) => a.campaign_id) };
 
   return null;
