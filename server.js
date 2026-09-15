@@ -857,23 +857,39 @@ function dedupeByText(frames) {
  * 확보한 여유는 해상도(정확도)를 올리는 데 쓴다 — verifySuspiciousVision 참고. */
 const MAX_LOW_CONFIDENCE_VERIFY = 8;
 
-function findSuspiciousFrames(zipped, bans) {
+function findSuspiciousFrames(zipped, bans, ownNames) {
   const cleanBans = (bans || []).filter(Boolean);
+  const cleanOwnNames = (ownNames || []).filter(Boolean);
   const banMatches = [];
+  const ownNameNearMiss = [];
   const lowConfidence = [];
   for (const r of zipped) {
     if (!r.text) continue;
+    const normText = r.text.replace(/\s+/g, "");
     if (cleanBans.some((b) => fuzzyContains(r.text, b))) {
       banMatches.push(r);
+    } else if (
+      // 우리 브랜드/제품명이 정확히는 아니지만 근접하게 읽힌 프레임 —
+      // Tesseract가 우리 이름 자체를 오독한 것일 수 있어, "확인 필요" 배지로
+      // 남겨두는 대신 여기서 Vision으로 실제로 뭐라고 쓰여있는지 확인한다.
+      // (등록된 브랜드/제품명을 이미 정확히 읽었다면 여기 걸릴 이유가 없다.)
+      cleanOwnNames.some((n) => {
+        const normName = n.replace(/\s+/g, "");
+        return normName && !normText.includes(normName) && fuzzyContains(normText, normName, 0.3, 2);
+      })
+    ) {
+      ownNameNearMiss.push(r);
     } else if (r.confidence < 60) {
       lowConfidence.push(r);
     }
   }
-  // 금칙어 의심(ban)은 실제 위반일 수 있어 정확도가 중요하니 고해상도로,
-  // 단순 저신뢰(lowConfidence)는 대부분 노이즈고 오독이 나와도 "확인 필요"
-  // 배지 + 보수적 판정 프롬프트가 안전망이 되어주니 저해상도로 — 검증
-  // 비용(TPM)을 위험도에 맞게 차등 배분한다. verifySuspiciousVision 참고.
+  // 금칙어 의심(ban)·브랜드/제품명 오독 의심(ownName)은 실제 위반이거나
+  // 정확도가 중요한 신호라 전부 고해상도로, 단순 저신뢰(lowConfidence)는
+  // 대부분 노이즈고 오독이 나와도 "확인 필요" 배지 + 보수적 판정 프롬프트가
+  // 안전망이 되어주니 저해상도로 — 검증 비용(TPM)을 위험도에 맞게 차등
+  // 배분한다. verifySuspiciousVision 참고.
   const dedupedBans = dedupeByText(banMatches).map((f) => ({ ...f, reason: "ban" }));
+  const dedupedOwnName = dedupeByText(ownNameNearMiss).map((f) => ({ ...f, reason: "ownName" }));
   const dedupedLow = dedupeByText(lowConfidence)
     .sort((a, b) => a.confidence - b.confidence)
     .map((f) => ({ ...f, reason: "lowConfidence" }));
@@ -883,22 +899,30 @@ function findSuspiciousFrames(zipped, bans) {
       `[자막 검수] 저신뢰 프레임 ${dedupedLow.length}개(중복 제거 후) 중 ${capped.length}개만 정밀검증 (나머지는 건너뜀)`,
     );
   }
-  return [...dedupedBans, ...capped];
+  return [...dedupedBans, ...dedupedOwnName, ...capped];
 }
 
 /* 2차 정밀검증: 의심 프레임만 GPT-4o 비전으로 보내 오탈자/오인식인지 실제 위반인지 판정한다. */
-async function verifySuspiciousVision(frames, bans) {
+async function verifySuspiciousVision(frames, bans, ownNames) {
   const key = process.env.OPENAI_API_KEY;
   if (!key || !frames.length) return [];
   const model = process.env.OCR_MODEL || "gpt-4o-mini";
   const banList = (bans || []).filter(Boolean).join(", ") || "(지정된 금칙어 없음)";
+  const ownNameList = (ownNames || []).filter(Boolean).join(", ");
 
   // 의심 프레임이 많으면(예: 60장 중 56장) 동시에 5개씩 쏘는 것만으로도
   // 계정 분당 토큰 한도(TPM)를 순식간에 다 써버려서, 재시도로도 못 버틸 만큼
   // 429가 몰린다. 동시 호출을 줄여 소모 속도를 늦춘다.
   return mapWithConcurrency(frames, 2, async (f) => {
     try {
-      const prompt = `이 이미지의 자막에서 다음 금칙어 목록 위반 소지가 있는지 검수해라: ${banList}.
+      // ownName 프레임은 금칙어 위반 여부가 아니라 "우리 브랜드/제품명을
+      // 정확히 뭐라고 썼는지"가 궁금한 경우라 질문 자체를 다르게 한다 —
+      // 그래도 반환 형식(JSON 스키마)은 같게 유지해 아래 처리 로직을 그대로 쓴다.
+      const prompt = f.reason === "ownName"
+        ? `이 이미지의 자막에 브랜드/제품명(${ownNameList})이 실제로 어떻게 쓰여있는지 확인해라.
+로컬 OCR(Tesseract)이 이 프레임에서 "${f.text}"라고 읽었는데, 등록된 브랜드/제품명과 정확히 일치하지 않아 오독일 가능성이 있다. 이미지를 직접 보고 실제 정확한 텍스트를 확인해라.
+아래 JSON 형식으로만 답하라: {"correctedText":"이미지에서 실제로 보이는 정확한 텍스트","violates":false,"matchedBan":null}`
+        : `이 이미지의 자막에서 다음 금칙어 목록 위반 소지가 있는지 검수해라: ${banList}.
 로컬 OCR(Tesseract)이 이 프레임에서 "${f.text}"라고 읽었다. 이게 실제로 금칙어를 포함한 문맥인지, 아니면 OCR의 오인식/오탈자인지 이미지를 직접 보고 판단해라.
 아래 JSON 형식으로만 답하라: {"correctedText":"이미지에서 실제로 보이는 정확한 텍스트","violates":boolean,"matchedBan":"위반한 금칙어 또는 null"}`;
       const r = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
@@ -1354,14 +1378,17 @@ async function continueOcrInBackground({ videoPath, influencerId, campaign, audi
 
     const zipped = frames.map((f, i) => ({ ...f, ...ocrResults[i] }));
 
-    // 프레임을 정밀검증(Vision) 대상으로 고를 땐 경쟁 브랜드명 목록만 본다 —
-    // "그 외 금칙 항목"은 문맥 판단이 필요해 프레임 단위가 아니라 전체 텍스트
-    // 단위로(reviewAgainstGuidelines) 판단한다.
-    const suspicious = findSuspiciousFrames(zipped, campaign.competitorBrands);
+    // 프레임을 정밀검증(Vision) 대상으로 고를 땐 경쟁 브랜드명 목록과 우리
+    // 브랜드/제품명 근접 오독을 본다 — "그 외 금칙 항목"은 문맥 판단이
+    // 필요해 프레임 단위가 아니라 전체 텍스트 단위로(reviewAgainstGuidelines)
+    // 판단한다.
+    const suspicious = findSuspiciousFrames(zipped, campaign.competitorBrands, [campaign.brand, campaign.product]);
     timings.suspiciousCount = suspicious.length;
 
     const t2 = Date.now();
-    const verifications = suspicious.length ? await verifySuspiciousVision(suspicious, campaign.competitorBrands) : [];
+    const verifications = suspicious.length
+      ? await verifySuspiciousVision(suspicious, campaign.competitorBrands, [campaign.brand, campaign.product])
+      : [];
     timings.visionVerifyMs = Date.now() - t2;
 
     const ocrSummary = buildOcrSummary(zipped, verifications);
