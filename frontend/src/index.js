@@ -48,14 +48,15 @@ const defaultGuidelines = {
 function loadLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { campaigns: [], selectedCampaignId: null };
+    if (!raw) return { campaigns: [], selectedCampaignId: null, tab: "campaign" };
     const parsed = JSON.parse(raw);
     return {
       campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns : [],
       selectedCampaignId: parsed.selectedCampaignId || null,
+      tab: parsed.tab === "dashboard" ? "dashboard" : "campaign",
     };
   } catch {
-    return { campaigns: [], selectedCampaignId: null };
+    return { campaigns: [], selectedCampaignId: null, tab: "campaign" };
   }
 }
 
@@ -196,7 +197,7 @@ function App() {
     setAuthStatus("anon");
     setScreen("landing");
   };
-  const [tab, setTab] = useState("campaign");
+  const [tab, setTab] = useState(local.tab);
   const [guideOpen, setGuideOpen] = useState(false);
   const [campaigns, setCampaigns] = useState(local.campaigns);
   const [selectedCampaignId, setSelectedCampaignId] = useState(
@@ -283,9 +284,9 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ campaigns, selectedCampaignId }),
+      JSON.stringify({ campaigns, selectedCampaignId, tab }),
     );
-  }, [campaigns, selectedCampaignId]);
+  }, [campaigns, selectedCampaignId, tab]);
 
   useEffect(() => {
     let cancelled = false;
