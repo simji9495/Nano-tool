@@ -553,6 +553,12 @@ function scanExactOccurrences(taggedText, target, source, type) {
   const near = [];
   if (!target) return { exact, near };
   const normTarget = target.replace(/\s+/g, "");
+  // 브랜드/제품명은 우리 쪽 STT·OCR 오독으로 근접 매치조차 못 잡으면
+  // "언급 안 됨"으로 취급돼 부당하게 반려된다 — 짧은 이름에서 글자 하나
+  // 이상 틀어지는 오독도 반드시 잡아야 하므로 관대한 쪽으로 기운다.
+  // 반대로 경쟁 브랜드는 근접 매치를 넓히면 없는 위반을 의심하게 되므로
+  // 기존 기준(minDist=1)을 그대로 유지한다.
+  const minDist = type === "brand" || type === "product" ? 2 : 1;
   for (const line of String(taggedText || "").split("\n")) {
     const m = line.match(/^\[([\d.]+)s\]\s*(.*)$/);
     if (!m) continue;
@@ -562,7 +568,7 @@ function scanExactOccurrences(taggedText, target, source, type) {
     if (!normQuote) continue;
     if (normQuote.includes(normTarget)) {
       exact.push({ timestamp, source, quote, type });
-    } else if (fuzzyContains(normQuote, normTarget)) {
+    } else if (fuzzyContains(normQuote, normTarget, 0.3, minDist)) {
       // 근접 매치는 등록된 표기를 그대로 "수정방향"으로 제안한다 — 이미 정답을
       // 알고 있는 항목(마케터가 직접 등록한 브랜드/제품 표기)이라 AI 호출 없이도
       // 바로 만들 수 있다.
@@ -633,6 +639,15 @@ USP는 문맥을 고려해 판단하라 — 표현이 달라도 같은 의미면
 "그 외 금칙 항목"도 문맥을 고려해 판단하되, 부정어를 반드시 반영하라 — 예를 들어 "자극감 언급"이 금칙이고 자막에
 "화끈거리는 느낌"처럼 실제 불쾌감을 나타내는 표현이 있으면 위반이지만, "화끈거림 없이"처럼 부정된 표현은 오히려 해당
 문제가 없다는 뜻이므로 위반이 아니다.
+
+"저자극", "무자극", "저자극성"처럼 부정적 의미를 뒤집는 접두사가 붙은 표현은 오히려 긍정적인 주장이다 — "자극"이라는
+글자가 들어있다고 자동으로 "자극적 사용감 언급" 위반으로 판단하지 마라. 예: "이게 저자극인데도 두피가 편안해요"는
+자극이 없다는 만족스러운 주장이므로 위반이 아니다.
+
+인플루언서 광고 콘텐츠는 보통 "기존에 겪던 문제 → 이 제품으로 해결"하는 사용후기 구조다. "두피에서 떨어진 비듬",
+"미용실 다녀온 듯 푸석했던 머릿결"처럼 제품을 쓰기 "전"의 문제 상황을 설명하는 도입부는, 그 자체로 제품에 대한
+부정적 언급이 아니라 오히려 제품의 효과를 부각하기 위한 긍정적 후기의 일부다. 이런 "이전 문제 상황 묘사"만 보고
+곧바로 위반으로 단정하지 말고, 전후 문맥에서 이 제품을 쓴 뒤 개선·해결됐다고 말하고 있는지 확인한 뒤 판단하라.
 
 긍정적인 관능 표현("쿨링감", "시원함", "산뜻함", "청량감" 등 — 대체로 USP로 쓰이는 좋은 의미의 표현)과 부정적인
 자극/불쾌 표현("따가움", "화끈거림", "쓰라림", "붉어짐" 등)을 혼동하지 마라. 피부 감각을 묘사한다는 점만으로
@@ -799,10 +814,10 @@ function levenshtein(a, b) {
  * 오프셋 윈도우만 보면 문장 중간 임의 위치에 있는 오독 문구를 놓칠 수 있다
  * (브랜드/제품명이 짧은 문구 하나가 아니라 긴 문장 속 어딘가에 등장하는
  * 실제 자막/음성 텍스트를 스캔해야 하는 용도이므로 정확도가 중요하다). */
-function fuzzyContains(text, phrase, maxRatio = 0.3) {
+function fuzzyContains(text, phrase, maxRatio = 0.3, minDist = 1) {
   if (!text || !phrase) return false;
   if (text.includes(phrase)) return true;
-  const maxDist = Math.max(1, Math.floor(phrase.length * maxRatio));
+  const maxDist = Math.max(minDist, Math.floor(phrase.length * maxRatio));
   for (let len = Math.max(1, phrase.length - maxDist); len <= phrase.length + maxDist; len++) {
     for (let i = 0; i + len <= text.length; i++) {
       if (levenshtein(text.slice(i, i + len), phrase) <= maxDist) return true;
