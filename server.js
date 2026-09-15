@@ -233,7 +233,7 @@ async function pingSupabaseHeartbeat() {
  * 재개할 방법이 없다. 그렇다고 "완료"로 얼버무려두면 자막을 실제로는
  * 확인 안 했다는 사실이 마케터 눈에 묻혀버리므로, 일정 시간(기본 30분)
  * 넘게 멈춰있으면 명확하게 실패로 표시해 재업로드를 유도한다. */
-const STUCK_CAPTION_TIMEOUT_MS = Number(process.env.STUCK_CAPTION_TIMEOUT_MS) || 30 * 60 * 1000;
+const STUCK_CAPTION_TIMEOUT_MS = Number(process.env.STUCK_CAPTION_TIMEOUT_MS) || 20 * 60 * 1000;
 const STUCK_CAPTION_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10분마다 확인
 
 async function finalizeStuckCaptionJobs() {
