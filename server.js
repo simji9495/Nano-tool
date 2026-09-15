@@ -253,7 +253,10 @@ async function finalizeStuckCaptionJobs() {
     await supabase
       .from("reelcheck_influencers")
       .update({
-        status: "검수실패",
+        // 마케터가 상세 팝업을 열지 않고 목록만 봐도 다음 행동(재업로드)을
+        // 바로 알 수 있도록, 안내 문구를 feedback이 아니라 status 자체에
+        // 담는다 — 목록 화면은 status를 그대로 보여주기 때문이다.
+        status: "검수실패 — 화면 자막 확인이 중단되었습니다. 영상을 다시 업로드해주세요.",
         result: "-",
         feedback: "화면 자막 확인이 오래 걸려 중단되었습니다. 영상을 다시 업로드해주세요.",
       })
