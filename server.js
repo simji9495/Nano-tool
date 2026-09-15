@@ -227,6 +227,41 @@ async function pingSupabaseHeartbeat() {
   if (error) console.warn(`[Supabase] 하트비트 실패: ${error.message}`);
 }
 
+/* 화면 자막 검수가 백그라운드로 넘어간 뒤(status: "검수완료(음성)") 서버가
+ * 재시작되거나 크래시되면, 그 작업은 아무 기록 없이 그냥 사라진다 — 처리
+ * 중이던 로컬 임시 영상도, R2에 있던 원본도 이미 지워진 뒤라 이어서
+ * 재개할 방법이 없다. 그렇다고 "완료"로 얼버무려두면 자막을 실제로는
+ * 확인 안 했다는 사실이 마케터 눈에 묻혀버리므로, 일정 시간(기본 30분)
+ * 넘게 멈춰있으면 명확하게 실패로 표시해 재업로드를 유도한다. */
+const STUCK_CAPTION_TIMEOUT_MS = Number(process.env.STUCK_CAPTION_TIMEOUT_MS) || 30 * 60 * 1000;
+const STUCK_CAPTION_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10분마다 확인
+
+async function finalizeStuckCaptionJobs() {
+  if (!supabase) return;
+  try {
+    const cutoff = new Date(Date.now() - STUCK_CAPTION_TIMEOUT_MS).toISOString();
+    const { data, error } = await supabase
+      .from("reelcheck_influencers")
+      .select("id")
+      .eq("status", "검수완료(음성)")
+      .lt("audio_done_at", cutoff);
+    if (error) return console.warn(`[감시] 멈춘 작업 조회 실패: ${error.message}`);
+    if (!data?.length) return;
+
+    await supabase
+      .from("reelcheck_influencers")
+      .update({
+        status: "검수실패",
+        result: "-",
+        feedback: "화면 자막 확인이 오래 걸려 중단되었습니다. 영상을 다시 업로드해주세요.",
+      })
+      .in("id", data.map((r) => r.id));
+    console.log(`[감시] 멈춘 자막 검수 ${data.length}건을 실패로 정리`);
+  } catch (e) {
+    console.warn(`[감시] 멈춘 작업 정리 실패: ${e.message}`);
+  }
+}
+
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 // 세션 쿠키를 설정할 때/지울 때 공통으로 쓰는 속성. 프론트(Vercel)와
 // 백엔드(Render)가 서로 다른 도메인이라 sameSite=none이 필요한데, 이건
@@ -1427,6 +1462,10 @@ async function processUploadedVideo({ videoPath, influencerId, campaign }) {
         feedback: review?.feedback || "",
         transcript: result.text,
         review,
+        // 자막 검수가 백그라운드로 넘어가는 시점을 남겨둔다 — 서버가 재시작/
+        // 크래시되면 이 시점 이후로 아무 진행도 없을 텐데, 그걸 감지하는 데
+        // 쓴다(finalizeStuckCaptionJobs 참고).
+        audio_done_at: canContinue ? new Date().toISOString() : null,
         ...(videoPathForPlayback ? { video_path: videoPathForPlayback } : {}),
       })
       .eq("id", influencerId)
@@ -1600,6 +1639,8 @@ if (process.env.NODE_ENV !== "test") {
     setInterval(cleanupOrphanedUploads, ORPHAN_CLEANUP_INTERVAL_MS);
     pingSupabaseHeartbeat();
     setInterval(pingSupabaseHeartbeat, SUPABASE_HEARTBEAT_INTERVAL_MS);
+    finalizeStuckCaptionJobs();
+    setInterval(finalizeStuckCaptionJobs, STUCK_CAPTION_CHECK_INTERVAL_MS);
   });
 }
 
