@@ -240,11 +240,13 @@ async function finalizeStuckCaptionJobs() {
   if (!supabase) return;
   try {
     const cutoff = new Date(Date.now() - STUCK_CAPTION_TIMEOUT_MS).toISOString();
+    // audio_done_at이 비어있는 건(이 컬럼이 생기기 전에 처리된 옛 건, 혹은
+    // 기록 자체가 실패한 건)도 언제까지고 방치되지 않도록 같이 잡는다.
     const { data, error } = await supabase
       .from("reelcheck_influencers")
       .select("id")
       .eq("status", "검수완료(음성)")
-      .lt("audio_done_at", cutoff);
+      .or(`audio_done_at.is.null,audio_done_at.lt.${cutoff}`);
     if (error) return console.warn(`[감시] 멈춘 작업 조회 실패: ${error.message}`);
     if (!data?.length) return;
 
@@ -1454,6 +1456,11 @@ async function processUploadedVideo({ videoPath, influencerId, campaign }) {
       : null;
 
   if (supabase && influencerId) {
+    // 핵심 필드(status/result/feedback 등) 저장은 이 한 번의 업데이트가
+    // 반드시 성공해야 한다 — audio_done_at처럼 부가적인 진단용 필드를 같은
+    // 요청에 같이 넣으면, 그 컬럼이 아직 없을 때(예: 마이그레이션 누락)
+    // PostgREST가 요청 전체를 실패시켜서 핵심 필드까지 저장이 안 되는
+    // 사고로 이어질 수 있다 — 그래서 별도 요청으로 분리한다.
     await supabase
       .from("reelcheck_influencers")
       .update({
@@ -1462,14 +1469,24 @@ async function processUploadedVideo({ videoPath, influencerId, campaign }) {
         feedback: review?.feedback || "",
         transcript: result.text,
         review,
-        // 자막 검수가 백그라운드로 넘어가는 시점을 남겨둔다 — 서버가 재시작/
-        // 크래시되면 이 시점 이후로 아무 진행도 없을 텐데, 그걸 감지하는 데
-        // 쓴다(finalizeStuckCaptionJobs 참고).
-        audio_done_at: canContinue ? new Date().toISOString() : null,
         ...(videoPathForPlayback ? { video_path: videoPathForPlayback } : {}),
       })
       .eq("id", influencerId)
       .then(() => {}, () => {});
+
+    // 자막 검수가 백그라운드로 넘어가는 시점을 남겨둔다 — 서버가 재시작/
+    // 크래시되면 이 시점 이후로 아무 진행도 없을 텐데, 그걸 감지하는 데
+    // 쓴다(finalizeStuckCaptionJobs 참고). 실패해도(컬럼 누락 등) 위 핵심
+    // 업데이트에는 영향 없다.
+    if (canContinue) {
+      supabase
+        .from("reelcheck_influencers")
+        .update({ audio_done_at: new Date().toISOString() })
+        .eq("id", influencerId)
+        .then(({ error }) => {
+          if (error) console.warn(`[audio_done_at 기록 실패] ${error.message}`);
+        });
+    }
   }
 
   if (canContinue) {
