@@ -477,7 +477,14 @@ function App() {
     const detailRows = [];
     influencers.forEach((inf) => {
       const rootReview = inf.review && !inf.review.error ? inf.review : null;
-      const occ = rootReview?.occurrences || [];
+      // 팝업의 "종합" 탭도 rootReview.occurrences가 아니라 음성/자막 탭 내역을
+      // 합쳐서 보여준다(아래 팝업 렌더링 로직 참고) — 엑셀도 똑같이 합쳐야
+      // 팝업에서 본 내용과 다운로드한 내용이 일치한다.
+      const hasSplitReview = rootReview && ("audio" in rootReview || "caption" in rootReview);
+      const occ = hasSplitReview
+        ? [...(rootReview.audio?.occurrences || []), ...(rootReview.caption?.occurrences || [])]
+            .sort((a, b) => a.timestamp - b.timestamp)
+        : rootReview?.occurrences || [];
       occ
         .filter((o) => o.needsReview === true || o.type === "ban" || o.type === "typo")
         .forEach((o) => {

@@ -693,6 +693,11 @@ USP는 문맥을 고려해 판단하라 — 표현이 달라도 같은 의미면
 말한 내용을 자막으로도 띄우는 경우). 같은 개념·같은 방향(둘 다 개선을 말하는 등)의 문장이면 출처(음성/자막)가
 다르다는 이유만으로 판정을 다르게 내리지 마라 — 규칙 1~5를 두 출처 모두에 동일하게 적용하라.
 
+"typo"(오탈자 의심)는 아주 제한적으로만 써라 — 실제로 글자가 깨져 있어 의미를 알 수 없거나(예: 인식
+오류로 나온 의미 불명의 문자 나열), 문장 자체가 한국어로 성립하지 않을 때만 typo로 표시한다. 문장이
+짧거나 구어체거나 수사의문문("근데 이렇게 묽은데 씻기나?")이어도, 뜻이 통하는 정상적인 발화라면 절대
+typo로 표시하지 마라.
+
 긍정적인 관능 표현("쿨링감", "시원함", "산뜻함", "청량감" 등 — 대체로 USP로 쓰이는 좋은 의미의 표현)과 부정적인
 자극/불쾌 표현("따가움", "화끈거림", "쓰라림", "붉어짐" 등)을 혼동하지 마라. 피부 감각을 묘사한다는 점만으로
 자동으로 "자극적 사용감"이라고 단정하지 말고, 문장 전체의 어조(칭찬·만족 vs 불만·경고)로 판단하라. 예를 들어
@@ -750,6 +755,12 @@ type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을
   // 규칙 1~6을 프롬프트로만 강제해도 "비듬 개선 효과"처럼 명백히 좋은 방향인
   // 문장을 위반으로 잘못 답하는 경우가 실측으로 확인됐다. direction이 "other"
   // (개선·중립·애매함)인 후보는 애초에 위반 목록/화면 어디에도 남기지 않는다.
+  //
+  // direction 필드 자체도 모델이 잘못 답할 수 있어(자기 불일치가 아니라 처음부터
+  // 방향을 오판하는 근본 오류), "개선/해소" 계열 표현이 문구에 그대로 있으면
+  // 모델의 direction 답변과 무관하게 코드에서 한 번 더 걸러낸다.
+  const POSITIVE_OVERRIDE_WORDS = ["개선", "해소", "완화", "해결", "좋아졌", "좋아지", "나아졌", "나아지"];
+  const hasPositiveOverride = (quote) => POSITIVE_OVERRIDE_WORDS.some((w) => quote.includes(w));
   const llmOccurrences = Array.isArray(parsed.occurrences)
     ? parsed.occurrences
         .filter((o) => o?.type === "usp" || o?.type === "ban" || o?.type === "typo")
@@ -763,7 +774,7 @@ type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을
           direction: String(o?.direction || ""),
           banText: String(o?.banText || ""),
         }))
-        .filter((o) => o.type !== "ban" || o.direction === "worsen")
+        .filter((o) => o.type !== "ban" || (o.direction === "worsen" && !hasPositiveOverride(o.quote)))
     : [];
   const contextualViolatedBans = llmOccurrences
     .filter((o) => o.type === "ban")
