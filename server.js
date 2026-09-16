@@ -605,12 +605,11 @@ export function hasPositiveOverride(quote) {
  * 단정하지 않고 "확인 필요"로만 표시해 마케터가 직접 판단하게 한다.
  * 반대로 USP 충족 여부·그 외 금칙 항목(문맥/부정어 이해가 필요)은 여전히
  * LLM에게 맡긴다 — 이건 정확한 문자열 비교로는 판단할 수 없는 영역이다. */
-async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
-
-  const model = process.env.REVIEW_MODEL || "gpt-4o-mini";
-  const guideline = {
+/* campaign 원본 값을 그대로 믿지 않고, 배열 필드는 항상 배열로, 문자열
+ * 필드는 항상 문자열로 정규화한다 — campaign이 null이거나 필드가 누락된
+ * 경우에도 아래 로직 전체가 안전하게 동작하도록 하는 단일 진입점이다. */
+export function buildGuideline(campaign) {
+  return {
     brand: campaign?.brand || "",
     product: campaign?.product || "",
     usps: Array.isArray(campaign?.usps) ? campaign.usps.filter(Boolean) : [],
@@ -622,11 +621,27 @@ async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
     brandAudioAliases: Array.isArray(campaign?.brandAudioAliases) ? campaign.brandAudioAliases.filter(Boolean) : [],
     productAudioAliases: Array.isArray(campaign?.productAudioAliases) ? campaign.productAudioAliases.filter(Boolean) : [],
   };
+}
 
-  const audioTagged = audioText || "";
-  const captionTagged = captionText || "";
-  const combinedForPrompt = `[음성 전사]\n${audioTagged || "(없음)"}\n\n[화면 자막/텍스트]\n${captionTagged || "(없음)"}`;
+// 근접 매치가 등록된 허용 표기와 정확히 일치하는 경우(예: "우로스"를 이미
+// 허용 표기로 등록)는 aliasExact에서 이미 확정 매치로 처리됐으므로, "확인
+// 필요" 근접 매치 목록에 중복으로 남기지 않는다.
+function stripAliased(nearList, aliases) {
+  const normAliases = aliases.map((a) => a.replace(/\s+/g, "")).filter(Boolean);
+  return nearList.filter((item) => {
+    const normQuote = item.quote.replace(/\s+/g, "");
+    return !normAliases.some((na) => normQuote.includes(na));
+  });
+}
 
+/* 브랜드명·제품명·경쟁 브랜드명은 등록된 표기와 공백만 무시하고 정확히
+ * 일치하는지를 결정론적으로(문자열 비교로) 판정한다 — LLM에게 맡기면
+ * "표기가 살짝 달라도 같은 대상"이라며 관대하게 인정하는데, 그 판단
+ * 근거가 우리 OCR/STT의 오독인지 실제 정확한 표기인지 LLM 스스로도 구분할
+ * 수 없어 신뢰할 수 없다("요자식"을 경쟁 브랜드 언급으로 오판한 사례).
+ * OpenAI 호출과 무관한 순수 문자열 로직이라 독립적으로 테스트 가능하도록
+ * 분리해뒀다. */
+export function scanDeterministicMatches(audioTagged, captionTagged, guideline) {
   const brandAudio = scanExactOccurrences(audioTagged, guideline.brand, "음성", "brand");
   const brandCaption = scanExactOccurrences(captionTagged, guideline.brand, "자막", "brand");
   const productAudio = scanExactOccurrences(audioTagged, guideline.product, "음성", "product");
@@ -641,17 +656,6 @@ async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
   const productAudioAliasExact = guideline.productAudioAliases.flatMap(
     (alias) => scanExactOccurrences(audioTagged, alias, "음성", "product").exact,
   );
-
-  // 근접 매치가 등록된 허용 표기와 정확히 일치하는 경우(예: "우로스"를
-  // 이미 허용 표기로 등록)는 위의 aliasExact에서 이미 확정 매치로 처리됐으므로,
-  // "확인 필요" 근접 매치 목록에 중복으로 남기지 않는다.
-  const stripAliased = (nearList, aliases) => {
-    const normAliases = aliases.map((a) => a.replace(/\s+/g, "")).filter(Boolean);
-    return nearList.filter((item) => {
-      const normQuote = item.quote.replace(/\s+/g, "");
-      return !normAliases.some((na) => normQuote.includes(na));
-    });
-  };
 
   const brandExact = [...brandAudio.exact, ...brandCaption.exact, ...brandAudioAliasExact];
   const brandNear = [...stripAliased(brandAudio.near, guideline.brandAudioAliases), ...brandCaption.near];
@@ -673,7 +677,13 @@ async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
     );
   }
 
-  const prompt = `다음은 인플루언서 광고 영상에서 추출한 텍스트다. 대괄호 [숫자s]는 영상 내 등장 시각(초)이다.
+  return { brandExact, brandNear, productExact, productNear, competitorExact, competitorNear };
+}
+
+/* 가이드라인 준수 검수 프롬프트 조립. 순수 문자열 조립이라 OpenAI 호출 없이도
+ * 특정 가이드라인 값이 프롬프트에 잘 반영되는지 테스트할 수 있다. */
+export function buildGuidelinePrompt(combinedForPrompt, guideline) {
+  return `다음은 인플루언서 광고 영상에서 추출한 텍스트다. 대괄호 [숫자s]는 영상 내 등장 시각(초)이다.
 "[음성 전사]" 구간에서 나온 내용은 출처를 "음성"으로, "[화면 자막/텍스트]" 구간에서 나온 내용은 출처를 "자막"으로 표시하라.
 아래 캠페인 가이드라인 기준으로 이 텍스트가 규정을 준수하는지 검수하라. 브랜드명·제품명·경쟁 브랜드 언급 여부는
 이미 별도 로직으로 판정을 마쳤으니 너는 신경 쓰지 않아도 된다 — 오직 USP 충족 여부와 아래 "그 외 금칙 항목"만 판단하라.
@@ -740,6 +750,113 @@ occurrences는 USP 충족, 그 외 금칙 위반(direction이 "worsen"인 경우
 suggestion은 type이 "ban"(금지 사항 위반) 또는 "typo"(오탈자 의심)일 때만 채운다 — 마케터가 바로 반영할 수 있게
 "이 문구를 어떻게 고치면 문제가 없어지는지" 한국어로 짧게 제안하라(예: 표현을 빼거나 다른 말로 바꾸는 구체적인 문장).
 type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을 빈 문자열로 둔다.`;
+}
+
+/* 모델의 원시 JSON 응답에서 우리가 쓸 필드만 뽑아 정규화한다. "그 외 금칙
+ * 항목" 위반 여부는 모델이 별도로 답하는 violatedBans 배열을 그대로 믿지
+ * 않고, occurrence 단위의 direction 필드로 다시 한번 걸러 직접 계산한다 —
+ * 규칙 1~6을 프롬프트로만 강제해도 "비듬 개선 효과"처럼 명백히 좋은 방향인
+ * 문장을 위반으로 잘못 답하는 경우가 실측으로 확인됐다. direction이 "other"
+ * (개선·중립·애매함)인 후보는 애초에 위반 목록/화면 어디에도 남기지 않는다.
+ *
+ * direction 필드 자체도 모델이 잘못 답할 수 있어(자기 불일치가 아니라 처음부터
+ * 방향을 오판하는 근본 오류), "개선/해소" 계열 표현이 문구에 그대로 있으면
+ * 모델의 direction 답변과 무관하게 코드에서 한 번 더 걸러낸다(hasPositiveOverride,
+ * 모듈 상단에 정의). 순수 함수라 OpenAI 응답을 흉내낸 JSON 객체만으로
+ * 테스트할 수 있다. */
+export function parseGuidelineResponse(parsed) {
+  const missingUsps = Array.isArray(parsed.missingUsps) ? parsed.missingUsps : [];
+  const llmOccurrences = Array.isArray(parsed.occurrences)
+    ? parsed.occurrences
+        .filter((o) => o?.type === "usp" || o?.type === "ban" || o?.type === "typo")
+        .map((o) => ({
+          timestamp: Number(o?.timestamp) || 0,
+          source: o?.source === "자막" ? "자막" : "음성",
+          quote: String(o?.quote || ""),
+          type: String(o?.type || ""),
+          note: String(o?.note || ""),
+          fix: String(o?.suggestion || ""),
+          direction: String(o?.direction || ""),
+          banText: String(o?.banText || ""),
+        }))
+        .filter((o) => o.type !== "ban" || (o.direction === "worsen" && !hasPositiveOverride(o.quote)))
+    : [];
+  const contextualViolatedBans = llmOccurrences
+    .filter((o) => o.type === "ban")
+    .map((o) => o.banText || o.note)
+    .filter(Boolean);
+
+  return {
+    missingUsps,
+    matchedUsps: Array.isArray(parsed.matchedUsps) ? parsed.matchedUsps : [],
+    feedback: String(parsed.feedback || ""),
+    llmOccurrences,
+    contextualViolatedBans,
+  };
+}
+
+/* 결정론적 매치(matches)와 모델 응답(parseGuidelineResponse 결과)을 합쳐
+ * 최종 검수 결과 하나로 만든다. 근접 매치(정확히는 아니지만 편집거리상
+ * 가까움)만 있고 정확 매치가 없는 경우도 "언급됨"으로 인정한다 — 화면에
+ * 정확히 쓰여 있는데 우리 OCR이 오독했을 가능성이 있는 상태에서 자동으로
+ * 반려시키면 안 된다. 근접 매치는 자동 판정에 영향을 주지 않고 needsReview
+ * 배지로만 마케터에게 확인을 맡긴다. 반대로 확실한 정확 매치도, 근접
+ * 매치도 전혀 없을 때만 "언급 안 됨"으로 취급해 반려에 반영한다. 경쟁
+ * 브랜드는 반대 방향으로 보수적이다 — 확실한 정확 매치만 위반으로 취급하고,
+ * 근접 매치(오독일 수도 있음)는 위반으로 단정하지 않고 확인 필요 배지로만
+ * 남긴다. 순수 함수라 OpenAI 호출 없이 테스트할 수 있다. */
+export function composeReviewResult(matches, parsedResponse) {
+  const { brandExact, brandNear, productExact, productNear, competitorExact, competitorNear } = matches;
+  const { missingUsps, matchedUsps, feedback, llmOccurrences, contextualViolatedBans } = parsedResponse;
+
+  const brandMentioned = brandExact.length > 0 || brandNear.length > 0;
+  const productMentioned = productExact.length > 0 || productNear.length > 0;
+  const violatedBans = [...competitorExact.map((o) => o.note), ...contextualViolatedBans];
+
+  const occurrences = [
+    ...brandExact,
+    ...brandNear,
+    ...productExact,
+    ...productNear,
+    ...competitorExact.map((o) => ({ ...o, note: `타 브랜드 언급 (${o.note})` })),
+    ...competitorNear.map((o) => ({ ...o, note: `근접 표기 — 실제 위반인지 확인 필요 (${o.note})` })),
+    ...llmOccurrences,
+  ].sort((a, b) => a.timestamp - b.timestamp);
+
+  const result =
+    brandMentioned && productMentioned && missingUsps.length === 0 && violatedBans.length === 0
+      ? "통과"
+      : "반려";
+
+  return {
+    result,
+    brandMentioned,
+    productMentioned,
+    matchedUsps,
+    missingUsps,
+    violatedBans,
+    feedback,
+    occurrences,
+    reviewNeeded: occurrences.some((o) => o.needsReview),
+  };
+}
+
+/* 위 순수 함수들을 엮어 실제 OpenAI 호출까지 수행하는 오케스트레이터.
+ * 가이드라인 준수 여부 자체를 판단하는 로직은 전부 위로 옮겼고, 여기서는
+ * "무엇을, 어떤 순서로 호출하는지"만 남긴다. */
+async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("OPENAI_API_KEY가 설정되지 않았습니다.");
+
+  const model = process.env.REVIEW_MODEL || "gpt-4o-mini";
+  const guideline = buildGuideline(campaign);
+
+  const audioTagged = audioText || "";
+  const captionTagged = captionText || "";
+  const combinedForPrompt = `[음성 전사]\n${audioTagged || "(없음)"}\n\n[화면 자막/텍스트]\n${captionTagged || "(없음)"}`;
+
+  const matches = scanDeterministicMatches(audioTagged, captionTagged, guideline);
+  const prompt = buildGuidelinePrompt(combinedForPrompt, guideline);
 
   const r = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -763,74 +880,7 @@ type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을
   try { parsed = JSON.parse(d.choices?.[0]?.message?.content || "{}"); }
   catch { throw new Error("검수 결과 파싱 실패"); }
 
-  const missingUsps = Array.isArray(parsed.missingUsps) ? parsed.missingUsps : [];
-  // "그 외 금칙 항목" 위반 여부는 모델이 별도로 답하는 violatedBans 배열을 그대로
-  // 믿지 않고, occurrence 단위의 direction 필드로 다시 한번 걸러 직접 계산한다 —
-  // 규칙 1~6을 프롬프트로만 강제해도 "비듬 개선 효과"처럼 명백히 좋은 방향인
-  // 문장을 위반으로 잘못 답하는 경우가 실측으로 확인됐다. direction이 "other"
-  // (개선·중립·애매함)인 후보는 애초에 위반 목록/화면 어디에도 남기지 않는다.
-  //
-  // direction 필드 자체도 모델이 잘못 답할 수 있어(자기 불일치가 아니라 처음부터
-  // 방향을 오판하는 근본 오류), "개선/해소" 계열 표현이 문구에 그대로 있으면
-  // 모델의 direction 답변과 무관하게 코드에서 한 번 더 걸러낸다(hasPositiveOverride,
-  // 모듈 상단에 정의).
-  const llmOccurrences = Array.isArray(parsed.occurrences)
-    ? parsed.occurrences
-        .filter((o) => o?.type === "usp" || o?.type === "ban" || o?.type === "typo")
-        .map((o) => ({
-          timestamp: Number(o?.timestamp) || 0,
-          source: o?.source === "자막" ? "자막" : "음성",
-          quote: String(o?.quote || ""),
-          type: String(o?.type || ""),
-          note: String(o?.note || ""),
-          fix: String(o?.suggestion || ""),
-          direction: String(o?.direction || ""),
-          banText: String(o?.banText || ""),
-        }))
-        .filter((o) => o.type !== "ban" || (o.direction === "worsen" && !hasPositiveOverride(o.quote)))
-    : [];
-  const contextualViolatedBans = llmOccurrences
-    .filter((o) => o.type === "ban")
-    .map((o) => o.banText || o.note)
-    .filter(Boolean);
-
-  // 근접 매치(정확히는 아니지만 편집거리상 가까움)만 있고 정확 매치가 없는 경우도
-  // "언급됨"으로 인정한다 — 화면에 정확히 쓰여 있는데 우리 OCR이 오독했을 가능성이
-  // 있는 상태에서 자동으로 반려시키면 안 된다. 근접 매치는 자동 판정에 영향을 주지
-  // 않고 needsReview 배지로만 마케터에게 확인을 맡긴다. 반대로 확실한 정확 매치도,
-  // 근접 매치도 전혀 없을 때만 "언급 안 됨"으로 취급해 반려에 반영한다.
-  const brandMentioned = brandExact.length > 0 || brandNear.length > 0;
-  const productMentioned = productExact.length > 0 || productNear.length > 0;
-  // 경쟁 브랜드는 반대 방향으로 보수적이다 — 확실한 정확 매치만 위반으로 취급하고,
-  // 근접 매치(오독일 수도 있음)는 위반으로 단정하지 않고 확인 필요 배지로만 남긴다.
-  const violatedBans = [...competitorExact.map((o) => o.note), ...contextualViolatedBans];
-
-  const occurrences = [
-    ...brandExact,
-    ...brandNear,
-    ...productExact,
-    ...productNear,
-    ...competitorExact.map((o) => ({ ...o, note: `타 브랜드 언급 (${o.note})` })),
-    ...competitorNear.map((o) => ({ ...o, note: `근접 표기 — 실제 위반인지 확인 필요 (${o.note})` })),
-    ...llmOccurrences,
-  ].sort((a, b) => a.timestamp - b.timestamp);
-
-  const result =
-    brandMentioned && productMentioned && missingUsps.length === 0 && violatedBans.length === 0
-      ? "통과"
-      : "반려";
-
-  return {
-    result,
-    brandMentioned,
-    productMentioned,
-    matchedUsps: Array.isArray(parsed.matchedUsps) ? parsed.matchedUsps : [],
-    missingUsps,
-    violatedBans,
-    feedback: String(parsed.feedback || ""),
-    occurrences,
-    reviewNeeded: occurrences.some((o) => o.needsReview),
-  };
+  return composeReviewResult(matches, parseGuidelineResponse(parsed));
 }
 
 /* ───────────── 3. 화면 자막 OCR: Tesseract 1차 필터 + GPT-4o 정밀검증 ───────────── */
