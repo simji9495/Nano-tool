@@ -700,6 +700,13 @@ USP는 문맥을 고려해 판단하라 — 표현이 달라도 같은 의미면
 
 의미가 불분명하거나 애매한 문구만으로 단정하지 말고, 확신이 설 때만 violatedBans로 표시한다.
 
+type이 "ban"인 occurrence는 반드시 "direction" 필드를 채워라 — 규칙 1~6에 따라 그 문장이 실제로 나쁜
+방향(불쾌·악화·발생)이면 "worsen", 좋은 방향(개선·해소·없음)이거나 판단이 애매하면 "other"로 표시한다.
+direction이 "other"인 항목은 위반이 아니라는 뜻이므로, 이 항목은 애초에 violatedBans에도 넣지 말고
+occurrences에도 포함하지 마라 — 정말로 나쁜 방향(direction="worsen")일 때만 occurrences에 넣고
+violatedBans에도 반영한다. 또한 type이 "ban"인 occurrence에는 "banText" 필드에 아래 [캠페인 가이드라인]의
+"그 외 금칙 항목" 중 실제로 위반된 항목의 원문 그대로를 넣어라.
+
 [캠페인 가이드라인]
 - 필수 포함 USP: ${guideline.usps.join(", ") || "(없음)"}
 - 그 외 금칙 항목: ${guideline.bans.join(", ") || "(없음)"}
@@ -708,8 +715,9 @@ USP는 문맥을 고려해 판단하라 — 표현이 달라도 같은 의미면
 """${combinedForPrompt}"""
 
 아래 JSON 형식으로만 답하라:
-{"matchedUsps":string[],"missingUsps":string[],"violatedBans":string[],"feedback":"한글 2~3문장","occurrences":[{"timestamp":숫자(초),"source":"음성"|"자막","quote":"실제 언급되거나 문제된 문구","type":"usp"|"ban"|"typo","note":"간단 설명(선택, 없으면 빈 문자열)","suggestion":"수정방향(선택, 없으면 빈 문자열)"}]}
-occurrences는 USP 충족, 그 외 금칙 위반, 오탈자로 의심되는 부분마다 하나씩 만들어라. 해당 없으면 빈 배열로 답하라.
+{"matchedUsps":string[],"missingUsps":string[],"feedback":"한글 2~3문장","occurrences":[{"timestamp":숫자(초),"source":"음성"|"자막","quote":"실제 언급되거나 문제된 문구","type":"usp"|"ban"|"typo","note":"간단 설명(선택, 없으면 빈 문자열)","suggestion":"수정방향(선택, 없으면 빈 문자열)","direction":"worsen"|"other"(type이 "ban"일 때만, 그 외엔 빈 문자열)","banText":"위반된 금칙 항목 원문(type이 "ban"이고 direction이 "worsen"일 때만, 그 외엔 빈 문자열)"}]}
+occurrences는 USP 충족, 그 외 금칙 위반(direction이 "worsen"인 경우만), 오탈자로 의심되는 부분마다 하나씩
+만들어라. 해당 없으면 빈 배열로 답하라.
 suggestion은 type이 "ban"(금지 사항 위반) 또는 "typo"(오탈자 의심)일 때만 채운다 — 마케터가 바로 반영할 수 있게
 "이 문구를 어떻게 고치면 문제가 없어지는지" 한국어로 짧게 제안하라(예: 표현을 빼거나 다른 말로 바꾸는 구체적인 문장).
 type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을 빈 문자열로 둔다.`;
@@ -737,7 +745,11 @@ type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을
   catch { throw new Error("검수 결과 파싱 실패"); }
 
   const missingUsps = Array.isArray(parsed.missingUsps) ? parsed.missingUsps : [];
-  const contextualViolatedBans = Array.isArray(parsed.violatedBans) ? parsed.violatedBans : [];
+  // "그 외 금칙 항목" 위반 여부는 모델이 별도로 답하는 violatedBans 배열을 그대로
+  // 믿지 않고, occurrence 단위의 direction 필드로 다시 한번 걸러 직접 계산한다 —
+  // 규칙 1~6을 프롬프트로만 강제해도 "비듬 개선 효과"처럼 명백히 좋은 방향인
+  // 문장을 위반으로 잘못 답하는 경우가 실측으로 확인됐다. direction이 "other"
+  // (개선·중립·애매함)인 후보는 애초에 위반 목록/화면 어디에도 남기지 않는다.
   const llmOccurrences = Array.isArray(parsed.occurrences)
     ? parsed.occurrences
         .filter((o) => o?.type === "usp" || o?.type === "ban" || o?.type === "typo")
@@ -748,8 +760,15 @@ type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을
           type: String(o?.type || ""),
           note: String(o?.note || ""),
           fix: String(o?.suggestion || ""),
+          direction: String(o?.direction || ""),
+          banText: String(o?.banText || ""),
         }))
+        .filter((o) => o.type !== "ban" || o.direction === "worsen")
     : [];
+  const contextualViolatedBans = llmOccurrences
+    .filter((o) => o.type === "ban")
+    .map((o) => o.banText || o.note)
+    .filter(Boolean);
 
   // 근접 매치(정확히는 아니지만 편집거리상 가까움)만 있고 정확 매치가 없는 경우도
   // "언급됨"으로 인정한다 — 화면에 정확히 쓰여 있는데 우리 OCR이 오독했을 가능성이
