@@ -628,10 +628,21 @@ async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
     (alias) => scanExactOccurrences(audioTagged, alias, "음성", "product").exact,
   );
 
+  // 근접 매치가 등록된 허용 표기와 정확히 일치하는 경우(예: "우로스"를
+  // 이미 허용 표기로 등록)는 위의 aliasExact에서 이미 확정 매치로 처리됐으므로,
+  // "확인 필요" 근접 매치 목록에 중복으로 남기지 않는다.
+  const stripAliased = (nearList, aliases) => {
+    const normAliases = aliases.map((a) => a.replace(/\s+/g, "")).filter(Boolean);
+    return nearList.filter((item) => {
+      const normQuote = item.quote.replace(/\s+/g, "");
+      return !normAliases.some((na) => normQuote.includes(na));
+    });
+  };
+
   const brandExact = [...brandAudio.exact, ...brandCaption.exact, ...brandAudioAliasExact];
-  const brandNear = [...brandAudio.near, ...brandCaption.near];
+  const brandNear = [...stripAliased(brandAudio.near, guideline.brandAudioAliases), ...brandCaption.near];
   const productExact = [...productAudio.exact, ...productCaption.exact, ...productAudioAliasExact];
-  const productNear = [...productAudio.near, ...productCaption.near];
+  const productNear = [...stripAliased(productAudio.near, guideline.productAudioAliases), ...productCaption.near];
 
   const competitorExact = [];
   const competitorNear = [];
