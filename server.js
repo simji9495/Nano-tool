@@ -39,7 +39,7 @@ import {
   PutBucketCorsCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { createWorker } from "tesseract.js";
+import { createWorker, PSM } from "tesseract.js";
 import { ProxyAgent, setGlobalDispatcher } from "undici";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -357,9 +357,12 @@ async function compressForOcr(videoPath) {
   const out = path.join(dir, "proxy.mp4");
   await run("ffmpeg", [
     "-y", "-i", videoPath,
-    "-vf", "scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)'",
-    "-preset", "ultrafast",
-    "-b:v", "900k",
+    // 컴퓨트를 2CPU/4GB로 올린 뒤로 CPU 여유가 생겨, 자막 인식률을 위해 화질을
+    // 한 단계 올린다(720→1080, 900k→2000k, ultrafast→veryfast) — 예전 1CPU
+    // 사양에서는 부하를 줄이려고 타이트하게 잡았던 값이다.
+    "-vf", "scale='if(gt(iw,ih),-2,1080)':'if(gt(iw,ih),1080,-2)'",
+    "-preset", "veryfast",
+    "-b:v", "2000k",
     "-c:a", "copy",
     out,
   ]);
@@ -848,7 +851,13 @@ function getTesseractWorker() {
           // 커밋되는 걸 막기 위해 임시 디렉터리로 캐시 경로를 명시한다.
           cachePath,
         }),
-      );
+      )
+      .then(async (worker) => {
+        // 기본 PSM(문서 전체 자동 분석)은 자막처럼 화면 여기저기 흩어진 짧은
+        // 텍스트에는 잘 안 맞는다 — 흩어진 텍스트를 읽는 모드로 바꾼다.
+        await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
+        return worker;
+      });
   }
   return tesseractWorkerPromise;
 }
