@@ -43,6 +43,8 @@ const defaultGuidelines = {
   usps: [""],
   bans: [""],
   competitorBrands: [""],
+  brandAudioAliases: [""],
+  productAudioAliases: [""],
 };
 
 function loadLocal() {
@@ -146,6 +148,8 @@ function mapApiCampaign(row, localInfluencers = []) {
     usps: Array.isArray(row.usps) && row.usps.length ? row.usps : [""],
     bans: Array.isArray(row.bans) && row.bans.length ? row.bans : [""],
     competitorBrands: Array.isArray(row.competitor_brands) && row.competitor_brands.length ? row.competitor_brands : [""],
+    brandAudioAliases: Array.isArray(row.brand_audio_aliases) && row.brand_audio_aliases.length ? row.brand_audio_aliases : [""],
+    productAudioAliases: Array.isArray(row.product_audio_aliases) && row.product_audio_aliases.length ? row.product_audio_aliases : [""],
     influencers: localInfluencers,
   };
 }
@@ -278,6 +282,8 @@ function App() {
         usps: selectedCampaign.usps?.length ? selectedCampaign.usps : [""],
         bans: selectedCampaign.bans?.length ? selectedCampaign.bans : [""],
         competitorBrands: selectedCampaign.competitorBrands?.length ? selectedCampaign.competitorBrands : [""],
+        brandAudioAliases: selectedCampaign.brandAudioAliases?.length ? selectedCampaign.brandAudioAliases : [""],
+        productAudioAliases: selectedCampaign.productAudioAliases?.length ? selectedCampaign.productAudioAliases : [""],
       }
     : defaultGuidelines;
 
@@ -382,6 +388,8 @@ function App() {
         usps: campaign.usps,
         bans: campaign.bans,
         competitorBrands: campaign.competitorBrands,
+        brandAudioAliases: campaign.brandAudioAliases,
+        productAudioAliases: campaign.productAudioAliases,
       }),
     });
     const data = await res.json();
@@ -403,6 +411,8 @@ function App() {
       usps: value.usps,
       bans: value.bans,
       competitorBrands: value.competitorBrands,
+      brandAudioAliases: value.brandAudioAliases,
+      productAudioAliases: value.productAudioAliases,
     });
   };
 

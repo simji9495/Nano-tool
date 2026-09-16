@@ -602,6 +602,11 @@ async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
     usps: Array.isArray(campaign?.usps) ? campaign.usps.filter(Boolean) : [],
     bans: Array.isArray(campaign?.bans) ? campaign.bans.filter(Boolean) : [],
     competitorBrands: Array.isArray(campaign?.competitorBrands) ? campaign.competitorBrands.filter(Boolean) : [],
+    // AI가 발음을 잘못 알아듣는 경우(예: "우르오스"를 "우로스"로 인식)를 대비해
+    // 마케터가 미리 등록해둔 "이것도 언급으로 인정" 표기 — 음성에만 적용한다
+    // (자막은 화면에 실제로 쓰인 글자를 그대로 정확히 대조해야 하므로 제외).
+    brandAudioAliases: Array.isArray(campaign?.brandAudioAliases) ? campaign.brandAudioAliases.filter(Boolean) : [],
+    productAudioAliases: Array.isArray(campaign?.productAudioAliases) ? campaign.productAudioAliases.filter(Boolean) : [],
   };
 
   const audioTagged = audioText || "";
@@ -612,9 +617,20 @@ async function reviewAgainstGuidelines({ audioText, captionText }, campaign) {
   const brandCaption = scanExactOccurrences(captionTagged, guideline.brand, "자막", "brand");
   const productAudio = scanExactOccurrences(audioTagged, guideline.product, "음성", "product");
   const productCaption = scanExactOccurrences(captionTagged, guideline.product, "자막", "product");
-  const brandExact = [...brandAudio.exact, ...brandCaption.exact];
+
+  // 마케터가 미리 등록해둔 "음성 인식 허용 표기"는 이미 검증된 대체 표기이므로
+  // 정확 매치로 취급해 "확인 필요" 배지 없이 바로 언급된 것으로 인정한다 —
+  // 자막에는 적용하지 않는다(화면 글자는 그대로 정확히 대조해야 함).
+  const brandAudioAliasExact = guideline.brandAudioAliases.flatMap(
+    (alias) => scanExactOccurrences(audioTagged, alias, "음성", "brand").exact,
+  );
+  const productAudioAliasExact = guideline.productAudioAliases.flatMap(
+    (alias) => scanExactOccurrences(audioTagged, alias, "음성", "product").exact,
+  );
+
+  const brandExact = [...brandAudio.exact, ...brandCaption.exact, ...brandAudioAliasExact];
   const brandNear = [...brandAudio.near, ...brandCaption.near];
-  const productExact = [...productAudio.exact, ...productCaption.exact];
+  const productExact = [...productAudio.exact, ...productCaption.exact, ...productAudioAliasExact];
   const productNear = [...productAudio.near, ...productCaption.near];
 
   const competitorExact = [];
@@ -1159,7 +1175,7 @@ const monthDate = (year, month) => {
 };
 
 app.post("/api/campaigns", requireSupabase, requireAuth, requireMarketer(supabase), async (req, res) => {
-  const { advertiser, name, startDate, endDate, startYear, startMonth, endMonth, manager, brand, product, usps, bans, competitorBrands } = req.body || {};
+  const { advertiser, name, startDate, endDate, startYear, startMonth, endMonth, manager, brand, product, usps, bans, competitorBrands, brandAudioAliases, productAudioAliases } = req.body || {};
   if (!advertiser || !name) {
     return res.status(400).json({ error: "광고주명과 프로젝트명은 필수입니다." });
   }
@@ -1176,6 +1192,8 @@ app.post("/api/campaigns", requireSupabase, requireAuth, requireMarketer(supabas
       usps: Array.isArray(usps) ? usps : [],
       bans: Array.isArray(bans) ? bans : [],
       competitor_brands: Array.isArray(competitorBrands) ? competitorBrands : [],
+      brand_audio_aliases: Array.isArray(brandAudioAliases) ? brandAudioAliases : [],
+      product_audio_aliases: Array.isArray(productAudioAliases) ? productAudioAliases : [],
     })
     .select()
     .single();
@@ -1184,7 +1202,7 @@ app.post("/api/campaigns", requireSupabase, requireAuth, requireMarketer(supabas
 });
 
 app.put("/api/campaigns/:id", requireSupabase, requireAuth, requireMarketer(supabase), async (req, res) => {
-  const { advertiser, name, startDate, endDate, manager, brand, product, usps, bans, competitorBrands } = req.body || {};
+  const { advertiser, name, startDate, endDate, manager, brand, product, usps, bans, competitorBrands, brandAudioAliases, productAudioAliases } = req.body || {};
   const patch = {};
   if (advertiser !== undefined) patch.advertiser = advertiser;
   if (name !== undefined) patch.name = name;
@@ -1196,6 +1214,8 @@ app.put("/api/campaigns/:id", requireSupabase, requireAuth, requireMarketer(supa
   if (usps !== undefined) patch.usps = usps;
   if (bans !== undefined) patch.bans = bans;
   if (competitorBrands !== undefined) patch.competitor_brands = competitorBrands;
+  if (brandAudioAliases !== undefined) patch.brand_audio_aliases = brandAudioAliases;
+  if (productAudioAliases !== undefined) patch.product_audio_aliases = productAudioAliases;
 
   const { data, error } = await supabase
     .from("reelcheck_campaigns")

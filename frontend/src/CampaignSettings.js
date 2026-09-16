@@ -7,6 +7,91 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
     const hasCompetitorEntries = campaign.competitorBrands.some(Boolean);
     const showCompetitor = competitorOpen || hasCompetitorEntries;
 
+    // 브랜드/제품명 "음성 인식 허용 표기" — AI(Whisper)가 발음을 잘못 알아들은
+    // 표기를 마케터가 미리 등록해두면, 음성 검수에서 이 표기도 정확 매치로
+    // 인정한다(자막은 화면 글자를 그대로 대조해야 하므로 적용 안 함).
+    const brandAliasInputRefs = useRef([]);
+    const productAliasInputRefs = useRef([]);
+    const handleAliasChange = (field, refs) => (i, rawValue) => {
+        if (!rawValue.includes(',')) {
+            let next = [...campaign[field]];
+            next[i] = rawValue;
+            setCampaign({ ...campaign, [field]: next });
+            return;
+        }
+        const parts = rawValue.split(',').map((s) => s.trim());
+        const trailing = parts.pop();
+        const completed = parts.filter(Boolean);
+        let next = [...campaign[field]];
+        next.splice(i, 1, ...completed, trailing);
+        setCampaign({ ...campaign, [field]: next });
+        const focusIndex = i + completed.length;
+        requestAnimationFrame(() => refs.current[focusIndex]?.focus());
+    };
+    const removeAlias = (field) => (i) => {
+        const filtered = campaign[field].filter((_, idx) => idx !== i);
+        setCampaign({ ...campaign, [field]: filtered.length ? filtered : [''] });
+    };
+    const renderAliasChips = (field, refs, placeholder) => {
+        const onChange = handleAliasChange(field, refs);
+        const onRemove = removeAlias(field);
+        return (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                {campaign[field].map((val, i) => {
+                    const isLast = i === campaign[field].length - 1;
+                    if (!isLast) {
+                        if (!val) return null;
+                        return (
+                            <span key={i} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                background: '#FFF', border: '1px solid var(--line)', color: 'var(--graphite)',
+                                borderRadius: '999px', padding: '3px 4px 3px 10px', fontSize: '12px', fontWeight: 600,
+                            }}>
+                                {val}
+                                <button type="button" onClick={() => onRemove(i)}
+                                    style={{ background: 'transparent', border: 'none', color: 'var(--mute)', cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: '2px 4px' }}>
+                                    ×
+                                </button>
+                            </span>
+                        );
+                    }
+                    return (
+                        <input
+                            key={`new-${field}`}
+                            className="in"
+                            placeholder={placeholder}
+                            style={{ width: '140px' }}
+                            value={val}
+                            ref={(el) => { refs.current[i] = el; }}
+                            onChange={(e) => onChange(i, e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                                    e.preventDefault();
+                                    onChange(i, e.currentTarget.value + ',');
+                                }
+                            }}
+                        />
+                    );
+                })}
+            </div>
+        );
+    };
+    const aliasLabel = (text, helpText) => (
+        <label className="lab" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+            {text}
+            <span
+                title={helpText}
+                style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: '14px', height: '14px', borderRadius: '50%',
+                    background: 'var(--pill)', color: 'var(--mute)', fontSize: '10px', fontWeight: 700, cursor: 'help',
+                }}
+            >
+                ?
+            </span>
+        </label>
+    );
+
     // 이 캠페인에 업로드를 허용할 에이전시 이메일 목록. 등록과 동시에 즉시
     // 허용되고(초대 메일 없음), 마케터만 추가/삭제할 수 있다.
     const [agencyEmails, setAgencyEmails] = useState([]);
@@ -107,6 +192,25 @@ export default function CampaignSettings({ campaign, setCampaign, onSave, showTo
             </div>
             <div style={{ fontSize: '11px', color: 'var(--mute)', marginTop: '8px' }}>
                 *브랜드명, 제품명을 정확히 기입해주세요. 기입하신 브랜드명, 제품명을 기준으로 영상 자막을 검수합니다.
+            </div>
+            <div className="grid2" style={{ marginTop: '14px' }}>
+                <div>
+                    {aliasLabel(
+                        '브랜드명 음성 인식 허용 표기',
+                        "AI가 브랜드/제품명 발음을 잘못 알아들을 수 있어요. 검수 통과로 간주할 문구를 지정하는 기능입니다. 예시: '우르오스' 브랜드의 경우 '우로스', '우루오스', '오로스', '오로오스'는 허용."
+                    )}
+                    {renderAliasChips('brandAudioAliases', brandAliasInputRefs, '예: 우로스')}
+                </div>
+                <div>
+                    {aliasLabel(
+                        '제품명 음성 인식 허용 표기',
+                        "AI가 브랜드/제품명 발음을 잘못 알아들을 수 있어요. 검수 통과로 간주할 문구를 지정하는 기능입니다. 예시: '스킨 브리지 로션' 제품의 경우 '스킨브릿지로션', '스킨브릿지로숀' 등은 허용."
+                    )}
+                    {renderAliasChips('productAudioAliases', productAliasInputRefs, '예: 스킨브릿지로션')}
+                </div>
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--mute)', marginTop: '8px' }}>
+                *음성 검수에만 적용됩니다(자막은 화면 글자 그대로 정확히 대조).
             </div>
             <div style={{ marginTop: '20px' }}>
                 <label className="lab">필수 포함 사항</label>
