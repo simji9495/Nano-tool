@@ -995,10 +995,10 @@ async function verifySuspiciousVision(frames, bans, ownNames) {
       const prompt = f.reason === "ownName"
         ? `이 이미지의 자막에 브랜드/제품명(${ownNameList})이 실제로 어떻게 쓰여있는지 확인해라.
 로컬 OCR(Tesseract)이 이 프레임에서 "${f.text}"라고 읽었는데, 등록된 브랜드/제품명과 정확히 일치하지 않아 오독일 가능성이 있다. 이미지를 직접 보고 실제 정확한 텍스트를 확인해라.
-아래 JSON 형식으로만 답하라: {"correctedText":"이미지에서 실제로 보이는 정확한 텍스트","violates":false,"matchedBan":null}`
+아래 JSON 형식으로만 답하라: {"correctedText":"이미지에 실제로 보이는 텍스트를 있는 그대로 적어라. 읽을 수 있는 글자가 전혀 없으면 빈 문자열 \"\"로 답하라(설명을 쓰지 마라).","violates":false,"matchedBan":null}`
         : `이 이미지의 자막에서 다음 금칙어 목록 위반 소지가 있는지 검수해라: ${banList}.
 로컬 OCR(Tesseract)이 이 프레임에서 "${f.text}"라고 읽었다. 이게 실제로 금칙어를 포함한 문맥인지, 아니면 OCR의 오인식/오탈자인지 이미지를 직접 보고 판단해라.
-아래 JSON 형식으로만 답하라: {"correctedText":"이미지에서 실제로 보이는 정확한 텍스트","violates":boolean,"matchedBan":"위반한 금칙어 또는 null"}`;
+아래 JSON 형식으로만 답하라: {"correctedText":"이미지에 실제로 보이는 텍스트를 있는 그대로 적어라. 읽을 수 있는 글자가 전혀 없으면 빈 문자열 \"\"로 답하라(설명을 쓰지 마라).","violates":boolean,"matchedBan":"위반한 금칙어 또는 null"}`;
       const r = await fetchOpenAIWithRetry("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -1031,7 +1031,10 @@ async function verifySuspiciousVision(frames, bans, ownNames) {
       const parsed = JSON.parse(d.choices?.[0]?.message?.content || "{}");
       return {
         t: f.t,
-        correctedText: String(parsed.correctedText || f.text),
+        // 모델이 "필드를 아예 안 줌"과 "읽을 텍스트가 없어서 빈 문자열로 답함"을
+        // 구분해야 한다 — ||로 합치면 명시적 빈 문자열까지 f.text로 되돌아가서
+        // 아래 buildOcrSummary의 "텍스트 없음" 판정이 무력화된다.
+        correctedText: typeof parsed.correctedText === "string" ? parsed.correctedText : f.text,
         violates: Boolean(parsed.violates),
         matchedBan: parsed.matchedBan || null,
       };
@@ -1049,11 +1052,16 @@ function buildOcrSummary(zipped, verifications) {
     if (!r.text) continue;
     const v = verByT.get(r.t);
     if (v) {
-      lines.push(
-        v.violates
-          ? `[${r.t}s] "${v.correctedText}" → 금칙어 위반 확인됨 (${v.matchedBan})`
-          : `[${r.t}s] "${v.correctedText}" → OCR 오인식/오탈자로 확인됨 (금칙어 아님)`,
-      );
+      // v.correctedText가 빈 문자열이면 Vision이 이 프레임에서 실제로 읽을 수
+      // 있는 텍스트가 없다고 답한 것 — 줄 자체를 건너뛴다. 예전엔 이 경우에도
+      // "OCR 오인식/오탈자로 확인됨" 같은 내부 판정 문구를 그대로 캡션 텍스트에
+      // 섞어 넣어서, 하류 LLM이 그 문장 자체를 화면 자막으로 착각해 "의미불명
+      // 오탈자"로 오판하는 사고로 이어졌다(Vision이 아예 답을 못 찾을 때
+      // "이미지에 텍스트가 없습니다" 식으로 즉흥적으로 설명을 쓰는 경우도 마찬가지).
+      const text = v.correctedText.trim();
+      if (text) {
+        lines.push(v.violates ? `[${r.t}s] ${text} (금칙어 위반 확인됨: ${v.matchedBan})` : `[${r.t}s] ${text}`);
+      }
     } else {
       lines.push(`[${r.t}s] ${r.text}`);
     }
@@ -1696,6 +1704,13 @@ app.post(
   // 배포 전환 시점에 구 인스턴스로 요청이 가 로그가 안 보이는 것인지, 아니면
   // 요청 자체가 서버에 닿지 않은 것인지 구분할 수 있게 한다.
   console.log(`[스토리지 경유 검수] 요청 접수 (influencerId=${influencerId || "-"}, path=${storagePath})`);
+
+  // 무거운 다운로드/전사 작업을 시작하기 전에 DB 상태부터 "검수 중..."으로
+  // 바꿔둔다 — 안 그러면 실제로는 처리 중이어도 DB엔 여전히 "미제출"이라,
+  // 그 사이 새로고침하면 아무 것도 안 한 것처럼 보이는 문제가 있었다.
+  if (supabase && influencerId) {
+    await supabase.from("reelcheck_influencers").update({ status: "검수 중..." }).eq("id", influencerId);
+  }
 
   res.json({ started: true });
 
