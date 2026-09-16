@@ -551,7 +551,7 @@ async function keyframes(videoPath, opts = {}) {
  * 대상 문구가 등장하는지 찾는다. 공백만 무시하고 완전히 일치하면 확정
  * 매치, 편집거리로 근접하지만 완전히 일치하지는 않으면(OCR/STT 오독인지
  * 실제 오탈자인지 자동으로 구분할 수 없음) 근접 매치로 따로 모은다. */
-function scanExactOccurrences(taggedText, target, source, type) {
+export function scanExactOccurrences(taggedText, target, source, type) {
   const exact = [];
   const near = [];
   if (!target) return { exact, near };
@@ -583,6 +583,17 @@ function scanExactOccurrences(taggedText, target, source, type) {
     }
   }
   return { exact, near };
+}
+
+/* "그 외 금칙 항목" 위반은 모델이 direction 필드로 방향(worsen/other)을 답하게
+ * 해서 걸러내는데, direction 자체를 모델이 잘못 답하는 근본 오류가 실측으로
+ * 확인됐다("비듬 개선 효과"를 위반으로 오판) — "개선/해소" 계열 표현이 문구에
+ * 그대로 있으면 모델의 direction 답변과 무관하게 코드에서 한 번 더 걸러낸다.
+ * 순수 문자열 판정이라 OpenAI 호출 없이 유닛 테스트로 검증할 수 있게
+ * 모듈 스코프로 분리해뒀다. */
+export const POSITIVE_OVERRIDE_WORDS = ["개선", "해소", "완화", "해결", "좋아졌", "좋아지", "나아졌", "나아지"];
+export function hasPositiveOverride(quote) {
+  return POSITIVE_OVERRIDE_WORDS.some((w) => quote.includes(w));
 }
 
 /* 브랜드명·제품명·경쟁 브랜드명은 등록된 표기와 공백만 무시하고 정확히
@@ -761,9 +772,8 @@ type이 "usp"(이미 충족된 USP)일 때는 고칠 게 없으니 suggestion을
   //
   // direction 필드 자체도 모델이 잘못 답할 수 있어(자기 불일치가 아니라 처음부터
   // 방향을 오판하는 근본 오류), "개선/해소" 계열 표현이 문구에 그대로 있으면
-  // 모델의 direction 답변과 무관하게 코드에서 한 번 더 걸러낸다.
-  const POSITIVE_OVERRIDE_WORDS = ["개선", "해소", "완화", "해결", "좋아졌", "좋아지", "나아졌", "나아지"];
-  const hasPositiveOverride = (quote) => POSITIVE_OVERRIDE_WORDS.some((w) => quote.includes(w));
+  // 모델의 direction 답변과 무관하게 코드에서 한 번 더 걸러낸다(hasPositiveOverride,
+  // 모듈 상단에 정의).
   const llmOccurrences = Array.isArray(parsed.occurrences)
     ? parsed.occurrences
         .filter((o) => o?.type === "usp" || o?.type === "ban" || o?.type === "typo")
@@ -878,7 +888,7 @@ async function ocrFramesTesseract(frames) {
   return results;
 }
 
-function levenshtein(a, b) {
+export function levenshtein(a, b) {
   const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
   for (let i = 0; i <= a.length; i++) dp[i][0] = i;
   for (let j = 0; j <= b.length; j++) dp[0][j] = j;
@@ -897,7 +907,7 @@ function levenshtein(a, b) {
  * 오프셋 윈도우만 보면 문장 중간 임의 위치에 있는 오독 문구를 놓칠 수 있다
  * (브랜드/제품명이 짧은 문구 하나가 아니라 긴 문장 속 어딘가에 등장하는
  * 실제 자막/음성 텍스트를 스캔해야 하는 용도이므로 정확도가 중요하다). */
-function fuzzyContains(text, phrase, maxRatio = 0.3, minDist = 1) {
+export function fuzzyContains(text, phrase, maxRatio = 0.3, minDist = 1) {
   if (!text || !phrase) return false;
   if (text.includes(phrase)) return true;
   const maxDist = Math.max(minDist, Math.floor(phrase.length * maxRatio));
@@ -912,7 +922,7 @@ function fuzzyContains(text, phrase, maxRatio = 0.3, minDist = 1) {
 /* 릴스 자막은 보통 같은 문구가 여러 프레임에 걸쳐 그대로 유지된다 — 그런
  * 프레임을 전부 따로 검증하면 사실상 같은 걸 여러 번 확인하는 셈이라
  * 낭비다. 텍스트가 사실상 동일한 프레임은 하나만 남긴다. */
-function dedupeByText(frames) {
+export function dedupeByText(frames) {
   const seen = [];
   const out = [];
   for (const f of frames) {
@@ -1054,7 +1064,7 @@ async function verifySuspiciousVision(frames, bans, ownNames) {
 }
 
 /* Tesseract 텍스트 전체(USP/브랜드 매칭용) + 검증된 의심 프레임 판정을 합쳐서 최종 검수용 요약을 만든다. */
-function buildOcrSummary(zipped, verifications) {
+export function buildOcrSummary(zipped, verifications) {
   const verByT = new Map(verifications.map((v) => [v.t, v]));
   const lines = [];
   for (const r of zipped) {
